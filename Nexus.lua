@@ -1,26 +1,22 @@
 -- ============================================================
---  HALLOWEEN SOUL + LOCUST — Dual Tab Hub (FIXED)
---  Bug fix: Locust forward-declared before mount()
+--  HALLOWEEN SOUL + GOJO — Dual Tab Hub
+--  Tab 1: Soul (pumpkin morph, 8 abilities)
+--  Tab 2: Gojo (4 tools, void-kill integrated)
 -- ============================================================
 local CONFIG = {
-    MODEL_NAME        = "Halloween Soul",
-    ASSET_ID          = 98347939019582,
-    MODEL_YAW         = 0,
-    TARGET_HEIGHT     = 16.5,
-    NORMAL_SPEED      = 22, QUAD_SPEED = 52, JUMP_POWER = 54,
-    GRAB_RANGE        = 28, SLAM_RANGE = 30, CURSE_RANGE = 95, SWIPE_RANGE = 24,
-    PUMPKIN_ASSET     = 15429930446, PUMPKIN_MESH = 1157467, PUMPKIN_TEX = 1158033,
-    SWIPE_DAMAGE      = 25, CURSE_TIME = 30, RESPAWN_DELAY = 18,
-    NPC_CLEANUP_TIME  = 6.0, MAX_VICTIM_SIZE = 55,
+    MODEL_NAME = "Halloween Soul", ASSET_ID = 98347939019582,
+    MODEL_YAW = 0, TARGET_HEIGHT = 16.5,
+    NORMAL_SPEED = 22, QUAD_SPEED = 52, JUMP_POWER = 54,
+    GRAB_RANGE = 28, SLAM_RANGE = 30, CURSE_RANGE = 95, SWIPE_RANGE = 24,
+    PUMPKIN_ASSET = 15429930446, PUMPKIN_MESH = 1157467, PUMPKIN_TEX = 1158033,
+    SWIPE_DAMAGE = 25, CURSE_TIME = 30, RESPAWN_DELAY = 18,
+    NPC_CLEANUP_TIME = 6.0, MAX_VICTIM_SIZE = 55,
     VOID_Y = -9000, VOID_THROW_VEL = 9999,
     ANIM_SPEED = 2.5, GORE_INTENSITY = 1.15,
     MENU_KEY = Enum.KeyCode.RightShift, INSTINCT_KEY = Enum.KeyCode.J,
-    NEON_A = Color3.fromRGB(255, 122, 24),
-    NEON_B = Color3.fromRGB(201, 20, 43),
-    NEON_C = Color3.fromRGB(123, 214, 58),
-    NEON_D = Color3.fromRGB(168, 64, 255),
+    NEON_A = Color3.fromRGB(255, 122, 24), NEON_B = Color3.fromRGB(201, 20, 43),
+    NEON_C = Color3.fromRGB(123, 214, 58), NEON_D = Color3.fromRGB(168, 64, 255),
 }
-local COOLDOWN = { rip=0, slam=0, devour=0, curse=0, swipe=0, head=0, roar=0, dummy=0 }
 local SND = {
     flesh="rbxassetid://3626677712", gore="rbxassetid://429400881", crunch="rbxassetid://4876899660",
     bite="rbxassetid://6305378182", chomp="rbxassetid://6204856270", scare="rbxassetid://971398743",
@@ -61,7 +57,6 @@ local function mtrack(c) morphConns[#morphConns+1]=c; return c end
 
 local menuOpen = false
 local actRip, actSlam, actDevour, actCurse, actSwipe, actHeadEat, actRoar, spawnDummy
-local openMenu, closeMenu
 local instinctLabelUI
 local activeTab = "soul"
 local buildMobilePad
@@ -84,15 +79,10 @@ local S = {
 local soulInstinct = false
 local shiftlockOn = false
 
--- ============================================================
---  ★★★ CRITICAL FIX: LOCUST FORWARD DECLARATIONS ★★★
---  These MUST come before mount()/unmount(), otherwise
---  mount() crashes on `Locust.mounted` (nil.mounted error)
---  which aborts the whole thing before loadTemplate() runs.
--- ============================================================
-local Locust = { mounted = false, instinct = false, cleanup = nil, state = {} }
-local toggleLocustInstinct = function() end
-local mountLocust, unmountLocust
+-- ===== GOJO FORWARD DECLS =====
+local Gojo = { mounted=false, instinct=false, cleanup=nil, dmgLib=nil, tools={} }
+local toggleGojoInstinct = function() end
+local mountGojo, unmountGojo
 
 local fxFolder = Instance.new("Folder")
 fxFolder.Name = "HalloweenSoul_FX_v3"
@@ -123,7 +113,7 @@ local function tw(o, t, props, style, dir)
     x:Play(); return x
 end
 
--- ===== VOID KILL =====
+-- ===== VOID KILL (shared by both modules) =====
 local function voidKill(model)
     if not model or not model.Parent then return false end
     if not model:IsA("Model") then return false end
@@ -207,7 +197,9 @@ local function setShiftlock(on)
     end
 end
 
--- ===== EFFECTS =====
+-- ============================================================
+--  SOUL EFFECTS HELPERS
+-- ============================================================
 local function bloodColor() return Color3.fromRGB(rng:NextInteger(180,245), rng:NextInteger(0,14), rng:NextInteger(0,18)) end
 local function boneColor()
     local b = rng:NextInteger(215,245)
@@ -367,7 +359,9 @@ local function fovPunch(amount)
     tw(cam, 0.45, {FieldOfView = baseFOV}, Enum.EasingStyle.Quart)
 end
 
--- ===== VICTIM SYSTEM =====
+-- ============================================================
+--  SOUL VICTIM SYSTEM
+-- ============================================================
 local victims = {}
 local function getRoot(m)
     local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso")
@@ -645,7 +639,6 @@ local function checkRespawns()
     end
 end
 
--- ===== DUMMY =====
 spawnDummy = function()
     if not S.hrp then return end
     local spawnFwd = S.hrp.Position + S.flat*12
@@ -696,7 +689,9 @@ spawnDummy = function()
     sfx(SND.ui, 0.8, 1.2)
 end
 
--- ===== TEMPLATE / ANALYSIS =====
+-- ============================================================
+--  SOUL TEMPLATE LOADING & ANALYSIS
+-- ============================================================
 local template, templateLoading = nil, false
 local function stripModel(model)
     for _, d in ipairs(model:GetDescendants()) do
@@ -716,7 +711,6 @@ local function loadTemplate()
         or ReplicatedStorage:FindFirstChild(CONFIG.MODEL_NAME, true)
         or Lighting:FindFirstChild(CONFIG.MODEL_NAME, true)
     if found and found:IsA("Model") then
-        warn("[Soul] Found existing model in workspace, cloning...")
         local ok, c = pcall(function() found.Archivable = true; return found:Clone() end)
         if ok and c then raw = c end
     end
@@ -730,36 +724,23 @@ local function loadTemplate()
         }
         for _, t in ipairs(tries) do
             if raw then break end
-            warn("[Soul] Trying " .. t.name .. "...")
             local ok, res = pcall(t.fn)
             if ok and res then
                 if typeof(res) == "table" then
                     local h = Instance.new("Model")
                     for _, i in ipairs(res) do if typeof(i) == "Instance" then i.Parent = h end end
                     raw = h
-                    warn("[Soul] ✔ " .. t.name .. " succeeded")
-                elseif typeof(res) == "Instance" then
-                    if res:IsA("Model") then
-                        raw = res
-                        warn("[Soul] ✔ " .. t.name .. " succeeded")
-                    else
-                        warn("[Soul] ✘ " .. t.name .. " returned non-Model")
-                    end
+                elseif typeof(res) == "Instance" and res:IsA("Model") then
+                    raw = res
                 end
-            else
-                warn("[Soul] ✘ " .. t.name .. " failed: " .. tostring(res))
             end
         end
     end
     if raw then
-        stripModel(raw)
-        template = raw
+        stripModel(raw); template = raw
         warn("[Soul] ✔ Template loaded (" .. #raw:GetDescendants() .. " descendants)")
     else
-        warn("[Soul] ✘✘✘ FAILED TO LOAD ASSET " .. CONFIG.ASSET_ID .. " ✘✘✘")
-        warn("[Soul] All 4 loading methods failed.")
-        warn("[Soul] Your executor blocks asset loading OR the asset was deleted.")
-        warn("[Soul] Try a different executor (Delta, Solara, Wave).")
+        warn("[Soul] ✘ FAILED to load asset " .. CONFIG.ASSET_ID)
     end
     templateLoading = false
     return template
@@ -913,7 +894,9 @@ local function analyze()
     end
 end
 
--- ===== ANIMATION KEYS =====
+-- ============================================================
+--  SOUL ANIMATION KEYS
+-- ============================================================
 local REST = {
     armL=0.05, armR=0.05, armYawL=0, armYawR=0, rollL=-0.06, rollR=0.06,
     elbowL=0.08, elbowR=0.08, elbowYawL=0, elbowYawR=0,
@@ -1246,7 +1229,7 @@ toggleSoulInstinct = function()
             end
         end)
     end
-    if instinctLabelUI and not Locust.mounted then
+    if instinctLabelUI and not Gojo.mounted then
         instinctLabelUI.Text = soulInstinct and "INSTINCT: ON" or "INSTINCT: OFF"
         instinctLabelUI.TextColor3 = soulInstinct and CONFIG.NEON_D or CONFIG.NEON_C
     end
@@ -1558,28 +1541,18 @@ end
 local savedLighting
 local function mount()
     if S.mounted or S.busy then return end
-    if Locust.mounted then unmountLocust() end
+    if Gojo.mounted then unmountGojo() end
     S.busy = true
-    warn("[Soul] ▶ mount() starting...")
+    warn("[Soul] Mounting...")
     local tpl = loadTemplate()
-    if not tpl then
-        warn("[Soul] ✘ mount aborting — no template")
-        S.busy = false; return
-    end
+    if not tpl then S.busy = false; return end
     local model = tpl:Clone()
     local entries, parts, h = buildEntries(model)
-    if not entries then
-        warn("[Soul] ✘ mount aborting — buildEntries nil")
-        S.busy = false; return
-    end
-    warn("[Soul] ✔ entries built: " .. #entries .. " parts, h=" .. tostring(h))
+    if not entries then S.busy = false; return end
     local char = player.Character or player.CharacterAdded:Wait()
     local hum = char:WaitForChild("Humanoid", 10)
     local hrp = char:WaitForChild("HumanoidRootPart", 10)
-    if not (hum and hrp) then
-        warn("[Soul] ✘ mount aborting — no humanoid/hrp")
-        S.busy = false; return
-    end
+    if not (hum and hrp) then S.busy = false; return end
     S.character, S.humanoid, S.hrp = char, hum, hrp
     S.entries, S.parts, S.height, S.model, S.cfs = entries, parts, h, model, {}
     S.origWalk, S.origJump = hum.WalkSpeed, hum.JumpPower
@@ -1616,7 +1589,7 @@ local function mount()
     lightFlash(feet + UP*3, CONFIG.NEON_A, 10, 40, 0.7)
     sfx(SND.scare, 2.5, 0.9)
     S.busy = false
-    warn("[Soul] ✔✔ mount() COMPLETE — you should see the morph now")
+    warn("[Soul] ✔ Mounted")
 end
 local function unmount()
     if not S.mounted then return end
@@ -1650,518 +1623,795 @@ local function unmount()
 end
 
 -- ============================================================
---  LOCUST MODULE (with forward decls already in place above)
+--  GOJO MODULE (from deobfuscated Gojo script)
 -- ============================================================
-mountLocust = function()
-    if Locust.mounted then return end
+mountGojo = function()
+    if Gojo.mounted then return end
     if S.mounted then unmount() end
-    Locust.mounted = true
-    sfx(SND.ui, 0.9, 0.8)
-    warn("[Locust] ▶ mountLocust() starting...")
 
-    if typeof(isfile) ~= "function" then
-        warn("[Locust] ✘ isfile not available — aborting")
-        Locust.mounted = false
+    if typeof(getcustomasset) ~= "function" then
+        warn("[Gojo] ✘ getcustomasset required — executor blocks it")
+        StarterGui:SetCore("SendNotification", { Title = "Gojo", Text = "Executor blocks getcustomasset", Duration = 5 })
         return
     end
-    if typeof(getcustomasset) ~= "function" then
-        warn("[Locust] ⚠ getcustomasset not available — model load will fail")
+    if typeof(writefile) ~= "function" then
+        warn("[Gojo] ✘ writefile required — executor blocks it")
+        return
     end
 
-    local L = Locust.state
-    L.v1 = {
-        Settings = { AnimationSpeed=1.25, Music=true, FOVEffects=true, CameraEffects=true, InfiniteJump=false },
-        Customization = { Hitmarker=103397225855140, DeathExtraSounds={5801257793, 4988580332} },
-        Blood = { CorpseLifetime=7, EmissionDuration=6, BigCubeLifetime=5, BigCubeCount=28, InitialSmallCount=90, WaveStartCount=22 },
-    }
-    L.v2 = { Joints={}, AnimDefaults={}, Rigs={}, ActiveTweens={} }
-    L.v3 = { ActiveConnections={}, TrashBin={} }
-    L.v4 = { Main="FEVerse/", RBXMs="FEVerse/RBXMs/", Sounds="FEVerse/Sounds/", Songs="FEVerse/Songs/" }
-    L.v5 = {
-        Movement = { Idle=false, Walking=false, Running=false, Crouching=false, Sitting=false },
-        Input = { Debounce=false, Shift=false, MobileSprint=false, KillMode=true },
-    }
-    local v1, v2, v3, v4, v5 = L.v1, L.v2, L.v3, L.v4, L.v5
+    Gojo.mounted = true
+    warn("[Gojo] Mounting...")
 
-    local helper
-    pcall(function()
-        local src = game:HttpGet("https://gist.githubusercontent.com/MelonsStuff/a003ea305dd302eab1f8d372daed38b4/raw/9db59962b28555fd699a7c29891efb85d45677ab/gistfile1.txt")
-        local fn = loadstring(src)
-        if fn then helper = fn() end
-    end)
-    if not helper then
-        warn("[Locust] Helper lib failed — features limited")
-        helper = { EnsureFolder=function() end, DownloadFile=function() end }
+    -- Download files
+    local function dl(name, url)
+        if isfile and isfile(name) then
+            local ok, c = pcall(readfile, name)
+            if ok and type(c) == "string" and #c > 100 then return true end
+        end
+        local ok, body = pcall(function() return game:HttpGet(url) end)
+        if ok and type(body) == "string" and #body > 100 then
+            pcall(writefile, name, body)
+            return true
+        end
+        return false
     end
 
-    local function notify(text)
-        task.spawn(function()
-            pcall(function()
-                StarterGui:SetCore("SendNotification", { Title = "Locust", Text = text, Duration = 3 })
+    local okModel = dl("Gojo.rbxmx", "https://github.com/ian49972/RBXMS/raw/refs/heads/main/Gojo.rbxmx")
+    dl("Purple.mp3", "https://github.com/ian49972/smth/raw/refs/heads/main/Purple.mp3")
+    dl("UnlimitedPurple.mp3", "https://github.com/ian49972/smth/raw/refs/heads/main/UnlimitedPurple.mp3")
+    dl("ImaginaryPurple.mp3", "https://github.com/ian49972/smth/raw/refs/heads/main/ImaginaryPurple.mp3")
+    dl("Domain.mp3", "https://github.com/ian49972/smth/raw/refs/heads/main/Domain.mp3")
+    dl("Honored.mp3", "https://github.com/ian49972/smth/raw/refs/heads/main/Honored.mp3")
+
+    if not okModel then
+        warn("[Gojo] ✘ Model download failed")
+        Gojo.mounted = false
+        return
+    end
+
+    -- Create dmg lib (f1 from original)
+    local g = getgenv()
+    local lp = Players.LocalPlayer
+    local dmgLib = {
+        Config = {
+            HitPlayers = true, HitNPCs = true, IgnoreForceField = true,
+            ShowDamageNumbers = true, EraseVisual = true, Debug = false,
+            Whitelist = {},
+            HollowPurple = { HitRadius = 20, Lethal = true, DirectFraction = 1, ShockwaveRadius = 30, ShockwaveFraction = 0.5 },
+            ImaginaryPurple = { HitRadius = 18, Lethal = true, DirectFraction = 1, ShockwaveRadius = 26, ShockwaveFraction = 0.6 },
+            UnlimitedPurple = {
+                BlueContactRadius = 10, BlueContactLethal = true, BlueContactFraction = 1, BlueContactCooldown = 0.6,
+                RedPulseRadius = 25, RedPulseLethal = true, RedPulseFraction = 1,
+                ExplosionLethalRadius = 400, ExplosionMaxRadius = 400, ExplosionEdgeFraction = 0.35, ExplosionExpandTime = 0.45,
+            },
+            InfiniteVoid = {
+                Radius = 220, TickInterval = 0.5, TotalDamageFraction = 1,
+                Paralyze = true, FreezeInPlace = true, InstantEraseOnOpen = true, KillOnCollapse = true,
+            },
+            HonoredOne = { SelfHeal = true },
+        },
+        Colors = {
+            Purple = Color3.fromRGB(176, 84, 255), Blue = Color3.fromRGB(80, 160, 255),
+            Red = Color3.fromRGB(255, 80, 80), Void = Color3.fromRGB(235, 235, 255),
+            Heal = Color3.fromRGB(120, 255, 160),
+        },
+        _humanoids = {},
+        _hurtPatched = false,
+    }
+    local v10 = dmgLib._humanoids
+
+    local function f3(h) if h:IsA("Humanoid") then v10[h] = true end end
+    for _, d in ipairs(workspace:GetDescendants()) do f3(d) end
+    workspace.DescendantAdded:Connect(f3)
+
+    function dmgLib.GetTargets()
+        local out = {}
+        local char = lp.Character
+        for h in pairs(v10) do
+            if not h:IsDescendantOf(workspace) then
+                v10[h] = nil
+            else
+                local p = h.Parent
+                if p and p:IsA("Model") and p ~= char and h.Health > 0 then
+                    local plr = Players:GetPlayerFromCharacter(p)
+                    if (plr and dmgLib.Config.HitPlayers and plr ~= lp) or (not plr and dmgLib.Config.HitNPCs) then
+                        local root = h.RootPart or p:FindFirstChild("HumanoidRootPart") or p:FindFirstChildWhichIsA("BasePart")
+                        if root then
+                            out[#out+1] = { Humanoid = h, Character = p, Root = root, Head = p:FindFirstChild("Head") }
+                        end
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function distTo(t, pos)
+        local d = (t.Root.Position - pos).Magnitude
+        if t.Head and t.Head:IsA("BasePart") then
+            d = math.min(d, (t.Head.Position - pos).Magnitude)
+        end
+        return d - 2
+    end
+
+    local function popup(t, text, color)
+        if not dmgLib.Config.ShowDamageNumbers then return end
+        local head = (t.Head and t.Head:IsA("BasePart") and t.Head) or t.Root
+        if not head then return end
+        local bb = Instance.new("BillboardGui")
+        bb.AlwaysOnTop = true; bb.LightInfluence = 0
+        bb.Size = UDim2.new(0, 220, 0, 56)
+        bb.StudsOffset = Vector3.new(math.random(-8,8)/10, 2.6, 0)
+        bb.Adornee = head; bb.Parent = head
+        local tl = Instance.new("TextLabel")
+        tl.BackgroundTransparency = 1; tl.Size = UDim2.fromScale(1,1)
+        tl.Font = Enum.Font.GothamBlack; tl.TextScaled = true; tl.Text = text
+        tl.TextColor3 = color or dmgLib.Colors.Purple
+        tl.TextStrokeColor3 = Color3.new(0,0,0); tl.TextStrokeTransparency = 0.15
+        tl.Parent = bb
+        TweenService:Create(bb, TweenInfo.new(1), {StudsOffset = bb.StudsOffset + Vector3.new(0,3,0)}):Play()
+        TweenService:Create(tl, TweenInfo.new(1), {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
+        Debris:AddItem(bb, 1.05)
+    end
+
+    local function eraseVisual(char)
+        if not char then return end
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("BasePart") or d:IsA("Decal") then
+                TweenService:Create(d, TweenInfo.new(0.45), {Transparency = 1}):Play()
+            elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
+                d.Enabled = false
+            end
+        end
+    end
+
+    function dmgLib.Hurt(target, amount, label, color, erase)
+        local hum = target.Humanoid
+        if not hum or hum.Health <= 0 then return false, false end
+        local lethal = amount == math.huge or amount >= hum.Health
+        local char = target.Character
+        local isNPC = not Players:GetPlayerFromCharacter(char)
+
+        if lethal then
+            hum.Health = 0
+        elseif dmgLib.Config.IgnoreForceField then
+            hum.Health = math.max(0, hum.Health - amount)
+        else
+            hum:TakeDamage(amount)
+        end
+
+        popup(target, lethal and (label or "☠") or "-"..tostring(math.floor(amount+0.5)), color or dmgLib.Colors.Purple)
+
+        if lethal and erase and dmgLib.Config.EraseVisual then
+            eraseVisual(char)
+        end
+
+        -- ★ VOID KILL for NPCs (same as Soul) ★
+        if lethal and isNPC and char and char.Parent then
+            task.spawn(function()
+                task.wait(0.4)  -- let erase visual play
+                pcall(voidKill, char)
             end)
-        end)
-    end
-    notify("Loading Locust...")
+        end
 
-    local path_model = "FEVerse/RBXMs/Locust.rbxm"
-    local path_music = "FEVerse/Songs/LocustTheme.mp3"
-
-    if not isfile(path_model) then
-        notify("Downloading model...")
-        pcall(function()
-            helper.DownloadFile("FEVerse/RBXMs/", "Locust.rbxm",
-                "https://github.com/MelonsStuff/FEVerse/raw/refs/heads/main/RBXMs/Locust.rbxm")
-        end)
-    end
-    if not isfile(path_music) then
-        pcall(function()
-            helper.DownloadFile("FEVerse/Songs/", "LocustTheme.mp3",
-                "https://github.com/MelonsStuff/FEVerse/raw/refs/heads/main/Songs/LocustTheme.mp3")
-        end)
+        return true, lethal
     end
 
-    local function waitFile(path)
-        local c = 0
-        while not isfile(path) and c < 60 do task.wait(1); c = c + 1 end
-        return isfile(path)
-    end
-    local hasModel = waitFile(path_model)
-    local hasMusic = waitFile(path_music)
-
-    local locustModel, animations, objects
-    if hasModel then
-        warn("[Locust] Loading rbxm...")
-        pcall(function()
-            local p = path_model
-            if typeof(getcustomasset) == "function" then p = getcustomasset(p) end
-            locustModel = InsertService:LoadLocalAsset(p)
-            if locustModel then
-                animations = locustModel:FindFirstChild("Animations")
-                objects = locustModel:FindFirstChild("Objects")
-                warn("[Locust] ✔ RBXM loaded")
+    function dmgLib.Sweep(opts)
+        local part = opts.Part
+        if not part then return { Stop = function() end } end
+        local radius = opts.Radius or math.max(part.Size.X, part.Size.Y, part.Size.Z)/2
+        local shockR = opts.ShockRadius
+        local lethal = opts.Lethal ~= false
+        local directFrac = opts.DirectFraction or 1
+        local shockFrac = opts.ShockFraction or 0.5
+        local duration = opts.Duration
+        local hits = {}
+        local t0 = os.clock()
+        local conn
+        conn = RunService.Heartbeat:Connect(function()
+            if not part.Parent or (duration and os.clock() - t0 >= duration) then
+                conn:Disconnect(); return
+            end
+            for _, t in ipairs(dmgLib.GetTargets()) do
+                local prev = hits[t.Humanoid]
+                if prev ~= "direct" then
+                    local d = distTo(t, part.Position)
+                    if d <= radius then
+                        hits[t.Humanoid] = "direct"
+                        dmgLib.Hurt(t, lethal and math.huge or t.Humanoid.MaxHealth * directFrac, "ERASED", dmgLib.Colors.Purple, lethal)
+                    elseif shockR and not prev and d <= shockR then
+                        hits[t.Humanoid] = "shock"
+                        dmgLib.Hurt(t, t.Humanoid.MaxHealth * shockFrac, nil, dmgLib.Colors.Purple)
+                    end
+                end
             end
         end)
-    end
-    if not locustModel then
-        warn("[Locust] ✘ Failed to load model — aborting")
-        Locust.mounted = false
-        return
+        return { Stop = function() if conn then conn:Disconnect() end end }
     end
 
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoid = character:WaitForChild("Humanoid")
-    local hrp = character:WaitForChild("HumanoidRootPart")
-    local currentCamera = workspace.CurrentCamera
-    local mouse = player:GetMouse()
-    L.character = character; L.humanoid = humanoid; L.hrp = hrp
-    L.origWalk = humanoid.WalkSpeed; L.origJump = humanoid.JumpPower
+    function dmgLib.Contact(opts)
+        local part = opts.Part
+        if not part then return { Stop = function() end } end
+        local radius = opts.Radius or 6
+        local lethal = opts.Lethal ~= false
+        local frac = opts.Fraction or 1
+        local cd = opts.Cooldown or 0.5
+        local hits = {}
+        local conn
+        conn = RunService.Heartbeat:Connect(function()
+            if not part.Parent then conn:Disconnect(); return end
+            local now = os.clock()
+            for _, t in ipairs(dmgLib.GetTargets()) do
+                if distTo(t, part.Position) <= radius then
+                    local last = hits[t.Humanoid]
+                    if not last or now - last >= cd then
+                        hits[t.Humanoid] = now
+                        dmgLib.Hurt(t, lethal and math.huge or t.Humanoid.MaxHealth * frac, lethal and "ERASED" or nil, opts.Color or dmgLib.Colors.Blue, lethal)
+                    end
+                end
+            end
+        end)
+        return { Stop = function() if conn then conn:Disconnect() end end }
+    end
 
-    local function cancelTween(part)
-        local t = v2.ActiveTweens[part]
-        if t then v2.ActiveTweens[part] = nil; pcall(function() t:Cancel() end) end
+    function dmgLib.Pulse(opts)
+        local pos = opts.Position
+        local radius = opts.Radius or 10
+        local lethal = opts.Lethal ~= false
+        local frac = opts.Fraction or 1
+        for _, t in ipairs(dmgLib.GetTargets()) do
+            if distTo(t, pos) <= radius then
+                dmgLib.Hurt(t, lethal and math.huge or t.Humanoid.MaxHealth * frac, lethal and "ERASED" or nil, opts.Color or dmgLib.Colors.Red, lethal)
+            end
+        end
     end
-    local function getAnimSpeed(anim)
-        local s = 1
-        if anim and type(anim.Speed) == "number" then s = math.abs(anim.Speed) end
-        return math.max(0.01, s * math.max(0.01, tonumber(v1.Settings.AnimationSpeed) or 1))
+
+    function dmgLib.Explosion(opts)
+        local pos = opts.Position
+        local maxR = opts.MaxRadius or opts.LethalRadius or 200
+        local expand = opts.ExpandTime or 0
+        local hits = {}
+        local t0 = os.clock()
+        local function doHit(r)
+            for _, t in ipairs(dmgLib.GetTargets()) do
+                if not hits[t.Humanoid] and distTo(t, pos) <= r then
+                    hits[t.Humanoid] = true
+                    dmgLib.Hurt(t, math.huge, "ERASED", dmgLib.Colors.Purple, true)
+                end
+            end
+        end
+        if expand <= 0 then doHit(maxR); return { Hits = hits } end
+        local conn
+        conn = RunService.Heartbeat:Connect(function()
+            local k = math.clamp((os.clock() - t0) / expand, 0, 1)
+            doHit(maxR * k)
+            if k >= 1 then conn:Disconnect() end
+        end)
+        return { Hits = hits }
     end
-    local function setTween(part, cf, dur)
-        if not part or not part.Parent then return end
-        cancelTween(part)
-        if not dur or dur <= 0 then pcall(function() part.CFrame = cf end); return end
-        local t = TweenService:Create(part, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = cf})
-        v2.ActiveTweens[part] = t
-        t:Play()
-        t.Completed:Once(function() v2.ActiveTweens[part] = nil end)
+
+    function dmgLib.Mark() end
+    function dmgLib.Log() end
+    function dmgLib.SelfHeal()
+        local c = lp.Character
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        if h then h.Health = h.MaxHealth end
     end
-    local function findAnim(name)
-        if not animations then return nil end
-        local a = animations:FindFirstChild(name)
-        if a and a:IsA("KeyframeSequence") then return a end
+
+    Gojo.dmgLib = dmgLib
+    g.GojoDamage = dmgLib
+
+    -- Pose-based animation helper
+    local tweenService = TweenService
+    local runService = RunService
+    local function poseAnimator(character, animFolder, speedMult)
+        if not character or not animFolder then return nil end
+        local styleMap = {
+            [Enum.PoseEasingStyle.Linear] = Enum.EasingStyle.Linear,
+            [Enum.PoseEasingStyle.Bounce] = Enum.EasingStyle.Bounce,
+            [Enum.PoseEasingStyle.Cubic] = Enum.EasingStyle.Cubic,
+            [Enum.PoseEasingStyle.Elastic] = Enum.EasingStyle.Elastic,
+            [Enum.PoseEasingStyle.Constant] = Enum.EasingStyle.Linear,
+        }
+        local dirMap = {
+            [Enum.PoseEasingDirection.In] = Enum.EasingDirection.In,
+            [Enum.PoseEasingDirection.Out] = Enum.EasingDirection.Out,
+            [Enum.PoseEasingDirection.InOut] = Enum.EasingDirection.InOut,
+        }
+        local kfs = {}
+        for _, kf in ipairs(animFolder:GetKeyframes()) do
+            table.insert(kfs, {Time = kf.Time, KF = kf})
+        end
+        table.sort(kfs, function(a,b) return a.Time < b.Time end)
+        if #kfs == 0 then return nil end
+        local jointCache, boneCache = {}, {}
+        local tracks = {}
+        local function findJoint(pose)
+            local name = pose.Name
+            if jointCache[name] then return jointCache[name] end
+            if boneCache[name] then return boneCache[name] end
+            for _, d in ipairs(character:GetDescendants()) do
+                if d:IsA("Motor6D") and d.Part1 and d.Part1.Name == name then
+                    jointCache[name] = d; return d
+                end
+                if d:IsA("Bone") and d.Name == name then
+                    boneCache[name] = d; return d
+                end
+            end
+            return nil
+        end
+        for _, kf in ipairs(kfs) do
+            for _, pose in ipairs(kf.KF:GetDescendants()) do
+                if pose:IsA("Pose") and pose.Weight > 0 then
+                    local j = findJoint(pose)
+                    if j then
+                        tracks[pose.Name] = tracks[pose.Name] or {}
+                        table.insert(tracks[pose.Name], {
+                            t = kf.Time, cf = pose.CFrame, style = pose.EasingStyle,
+                            dir = pose.EasingDirection, joint = j,
+                        })
+                    end
+                end
+            end
+        end
+        local len = kfs[#kfs].Time / (speedMult or 1)
+        local running, t0, conn = true, os.clock(), nil
+        conn = runService.Heartbeat:Connect(function()
+            if not running or not character.Parent then conn:Disconnect(); return end
+            local t = (os.clock() - t0) * (speedMult or 1) % len
+            for _, arr in pairs(tracks) do
+                local a, b = arr[1], arr[1]
+                for i = 1, #arr - 1 do
+                    if t >= arr[i].t and t < arr[i+1].t then
+                        a, b = arr[i], arr[i+1]; break
+                    end
+                end
+                if t >= arr[#arr].t then a, b = arr[#arr], arr[#arr] end
+                local p = b.t > a.t and (t - a.t) / (b.t - a.t) or 0
+                local v = tweenService:GetValue(p, styleMap[b.style] or Enum.EasingStyle.Linear, dirMap[b.dir] or Enum.EasingDirection.InOut)
+                if a.joint then
+                    pcall(function() a.joint.Transform = a.cf:Lerp(b.cf, v) end)
+                end
+            end
+        end)
+        return {
+            Length = len,
+            Play = function() t0 = os.clock() end,
+            Stop = function() running = false; if conn then conn:Disconnect() end end,
+        }
+    end
+
+    -- Tool creators (from original f13, f28, f31, f35)
+    local function createTool(name, requiresHandle)
+        local t = Instance.new("Tool")
+        t.Name = name
+        t.RequiresHandle = requiresHandle or false
+        return t
+    end
+
+    -- Download & create all 4 tools
+    local function safeGetObjects(path)
+        local ok, res = pcall(function()
+            local url = typeof(getcustomasset) == "function" and getcustomasset(path) or path
+            return game:GetObjects(url)
+        end)
+        if ok and res and res[1] then return res[1] end
         return nil
     end
-    local function buildAnim(seq)
-        local kf = seq:GetKeyframes()
-        table.sort(kf, function(a,b) return a.Time < b.Time end)
-        local inst = { Speed=1, Length=kf[#kf].Time, TimePosition=0, Looped=seq.Loop, IsPlaying=false, Stopped=true, _generation=0 }
-        function inst:Play(_f, speed)
-            if self.IsPlaying then return end
-            if type(speed) == "number" then self.Speed = math.max(0.01, math.abs(speed)) end
-            self._generation = self._generation + 1
-            local gen = self._generation
-            self.Stopped = false; self.IsPlaying = true; self.TimePosition = 0
-            task.spawn(function()
-                RunService.Heartbeat:Wait()
-                local prev = 0
-                while self._generation == gen and not self.Stopped do
-                    for _, kf2 in ipairs(kf) do
-                        if self.Stopped or self._generation ~= gen then break end
-                        for _, pose in ipairs(kf2:GetDescendants()) do
-                            if pose:IsA("Pose") then
-                                local j = v2.Joints[pose.Name]
-                                if j then
-                                    local def = v2.AnimDefaults[pose.Name]
-                                    setTween(j, (def and def * pose.CFrame) or pose.CFrame, 0.1)
-                                end
-                            end
-                        end
-                        task.wait(math.max(0.02, (kf2.Time - prev) / getAnimSpeed(self)))
-                        prev = kf2.Time
-                        self.TimePosition = kf2.Time
-                    end
-                    prev = 0
-                    if not self.Looped then break end
-                end
-                if self._generation == gen then self.IsPlaying = false; self.Stopped = true end
+
+    -- ★ HOLLOW PURPLE TOOL ★
+    local hpTool = createTool("Hollow Purple")
+    hpTool.Activated:Connect(function()
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp then return end
+        local origWalk = hum.WalkSpeed
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then animator.Parent = nil end
+        hum.WalkSpeed = 0
+
+        local rbx = safeGetObjects("Gojo.rbxmx")
+        if not rbx then
+            warn("[Gojo] rbxmx load failed for Hollow Purple")
+            hum.WalkSpeed = origWalk
+            if animator then animator.Parent = hum end
+            return
+        end
+        rbx.Parent = ReplicatedStorage
+
+        local clone = rbx:FindFirstChild("Effects"):FindFirstChild("HollowPurple"):Clone()
+        local blueOrb = clone:FindFirstChild("BlueOrb") or clone:FindFirstChild("Blue Orb")
+        local redOrb = clone:FindFirstChild("RedOrb") or clone:FindFirstChild("Red Orb")
+        local purple = clone:FindFirstChild("Purple")
+        local purple2 = clone:FindFirstChild("Purple2")
+
+        if blueOrb then
+            blueOrb.CFrame = hrp.CFrame * CFrame.new(-5, 0, 8)
+            blueOrb.Anchored = true; blueOrb.Parent = workspace
+        end
+        if redOrb then
+            redOrb.CFrame = hrp.CFrame * CFrame.new(5, 0, 8)
+            redOrb.Anchored = true; redOrb.Parent = workspace
+        end
+
+        local s = Instance.new("Sound")
+        s.SoundId = typeof(getcustomasset) == "function" and getcustomasset("Purple.mp3") or ""
+        s.Volume = 1; s.Parent = workspace
+        pcall(function() s:Play() end)
+
+        task.wait(6)
+        if blueOrb then blueOrb:Destroy() end
+        if redOrb then redOrb:Destroy() end
+
+        if purple then
+            purple.CFrame = hrp.CFrame * CFrame.new(0, 10, -20)
+            purple.Anchored = true; purple.Parent = workspace
+            task.wait(7)
+            purple:Destroy()
+        end
+
+        if purple2 then
+            purple2.Anchored = true
+            for _, d in ipairs(purple2:GetDescendants()) do
+                if d:IsA("BasePart") then d.Anchored = true; d.CanCollide = false end
+            end
+            local lv = hrp.CFrame.LookVector
+            purple2.CFrame = hrp.CFrame * CFrame.new(0, 10, -8)
+            purple2.Rotation = Vector3.new(0, math.deg(math.atan2(lv.X, lv.Z)), 0)
+            purple2.Parent = workspace
+
+            local cf = purple2.CFrame
+            local start = os.clock()
+            local conn
+            conn = RunService.Heartbeat:Connect(function()
+                if os.clock() - start >= 15 or not purple2.Parent then conn:Disconnect(); return end
+                cf = cf + lv * 280 * 0.016
+                purple2.CFrame = cf
             end)
-        end
-        function inst:Stop()
-            self._generation = self._generation + 1
-            self.Stopped = true; self.IsPlaying = false
-        end
-        return inst
-    end
-    local function playAnim(rig, seq, fade, speed, loop, restart)
-        if not rig or not seq then return nil end
-        v2.Rigs[rig] = v2.Rigs[rig] or {}
-        local rigAnims = v2.Rigs[rig]
-        local a = rigAnims[seq.Name]
-        if not a then a = buildAnim(seq); rigAnims[seq.Name] = a end
-        for name, other in pairs(rigAnims) do
-            if name ~= seq.Name and other.IsPlaying then other:Stop() end
-        end
-        if loop ~= nil then a.Looped = loop end
-        if restart and a.IsPlaying then a:Stop() end
-        if not a.IsPlaying then a:Play(fade or 0.1, speed or 1) end
-        return a
-    end
+            Debris:AddItem(purple2, 15)
 
-    local locustVisual, locustRoot
-    if objects then
-        local starter = objects:FindFirstChild("StarterCharacter")
-        if starter then
-            locustVisual = starter:Clone()
-            locustVisual.Name = "LocustVisual"
-            local h = locustVisual:FindFirstChildOfClass("Humanoid")
-            if h then h:Destroy() end
-            for _, d in ipairs(locustVisual:GetDescendants()) do
-                if d:IsA("BasePart") then
-                    d.Anchored=true; d.CanCollide=false; d.CanTouch=false; d.CanQuery=false; d.Massless=true
-                    if d:IsA("Part") and d.Shape == Enum.PartType.Block then d.Transparency = 1
-                    else d.Transparency = 0 end
-                elseif d:IsA("Bone") then
-                    v2.Joints[d.Name] = d
-                    v2.AnimDefaults[d.Name] = d.CFrame
-                elseif d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then
-                    d:Destroy()
-                end
-            end
-            locustRoot = locustVisual:FindFirstChild("HumanoidRootPart", true) or locustVisual:FindFirstChildWhichIsA("BasePart", true)
-            locustVisual.Parent = workspace
-            if locustRoot then pcall(function() locustVisual.PrimaryPart = locustRoot end) end
-            pcall(function() locustVisual:PivotTo(hrp.CFrame) end)
-            L.locustVisual = locustVisual; L.locustRoot = locustRoot
-            warn("[Locust] ✔ Visual spawned")
-        else
-            warn("[Locust] ⚠ No StarterCharacter in Objects")
+            local cfg = dmgLib.Config.HollowPurple
+            dmgLib.Sweep({
+                Part = purple2, Radius = cfg.HitRadius, Lethal = cfg.Lethal,
+                DirectFraction = cfg.DirectFraction, ShockRadius = cfg.ShockwaveRadius,
+                ShockFraction = cfg.ShockwaveFraction, Duration = 15,
+            })
         end
-    end
 
-    local locustTheme
-    if hasMusic then
-        locustTheme = Instance.new("Sound")
-        locustTheme.Name = "LocustTheme"; locustTheme.Volume = 1; locustTheme.Looped = true
-        locustTheme.Parent = hrp
-        if RunService:IsStudio() then locustTheme.SoundId = "rbxasset://Locust.mp3"
-        elseif typeof(getcustomasset) == "function" then locustTheme.SoundId = getcustomasset(path_music) end
-        if v1.Settings.Music then pcall(function() locustTheme:Play() end) end
-        L.locustTheme = locustTheme
-    end
-
-    local locustOrigTransp = {}
-    local function locustHide(d)
-        if d:IsA("BasePart") or d:IsA("Decal") then
-            if locustOrigTransp[d] == nil then locustOrigTransp[d] = d.Transparency end
-            d.Transparency = 1
-        end
-    end
-    for _, d in ipairs(character:GetDescendants()) do locustHide(d) end
-    local hideConn = character.DescendantAdded:Connect(function(d) task.defer(locustHide, d) end)
-    humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-
-    local function locustVoidKill(model)
-        if not model or not model.Parent or not model:IsA("Model") then return end
-        if Players:GetPlayerFromCharacter(model) then return end
-        local myChar = player.Character
-        if myChar and (model == myChar or model:IsDescendantOf(myChar)) then return end
-        local mhum = model:FindFirstChildOfClass("Humanoid")
-        if not mhum then return end
-        pcall(function()
-            if sethiddenproperty then
-                sethiddenproperty(player, "SimulationRadius", 5000)
-                sethiddenproperty(player, "MaxSimulationRadius", 5000)
-            end
-        end)
-        local parts = {}
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("BasePart") and not (myChar and d:IsDescendantOf(myChar)) then
-                parts[#parts+1] = d
-                pcall(function() d:SetNetworkOwner(player) end)
-            end
-        end
-        task.wait(0.05)
-        for _, p in ipairs(parts) do
-            if p.Parent then
-                pcall(function()
-                    p.Anchored = false; p.CanCollide = false
-                    p.CFrame = CFrame.new(p.Position.X, -9000, p.Position.Z)
-                    p.AssemblyLinearVelocity = Vector3.new(0, -9999, 0)
-                    p.AssemblyAngularVelocity = Vector3.zero
-                end)
-            end
-        end
-        pcall(function() mhum.Health = 0; mhum:ChangeState(Enum.HumanoidStateType.Dead) end)
-        pcall(function() model:BreakJoints() end)
-        task.delay(0.15, function()
-            if model and model.Parent then
-                for _, d in ipairs(model:GetDescendants()) do
-                    if d:IsA("BasePart") then pcall(function() d:Destroy() end) end
-                end
-                pcall(function() model:Destroy() end)
-            end
-        end)
-    end
-
-    local function locustKill(targetPart)
-        if v5.Input.Debounce or not v5.Input.KillMode then return end
-        local model = targetPart and targetPart:FindFirstAncestorOfClass("Model")
-        if not model or model == character or model == locustVisual then return end
-        local targetHum = model:FindFirstChildOfClass("Humanoid")
-        if not targetHum or targetHum.Health <= 0 then return end
-        local targetRoot = model:FindFirstChild("HumanoidRootPart")
-            or model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
-            or model:FindFirstChildWhichIsA("BasePart")
-        if not targetRoot then return end
-        v5.Input.Debounce = true
-        hrp.Anchored = true
-        local origWalk = targetHum.WalkSpeed; local origAuto = targetHum.AutoRotate
-        local success = false
-        local corpseContainer, corpse
-        xpcall(function()
-            targetHum.WalkSpeed = 0; targetHum.AutoRotate = false
-            targetRoot.Anchored = true
-            local wantCF = hrp.CFrame * CFrame.new(0, 0, -3)
-            if (targetRoot.Position - hrp.Position).Magnitude > 5 then
-                local t = TweenService:Create(targetRoot, TweenInfo.new(0.3), {CFrame = wantCF})
-                t:Play(); t.Completed:Wait()
-            else targetRoot.CFrame = wantCF end
-            local lookAt = Vector3.new(targetRoot.Position.X, hrp.Position.Y, targetRoot.Position.Z)
-            if (lookAt - hrp.Position).Magnitude > 0.01 then
-                hrp.CFrame = CFrame.lookAt(hrp.Position, lookAt)
-            end
-            local killSeq = findAnim("Kill")
-            if killSeq and locustVisual then
-                local a = playAnim(locustVisual, killSeq, 0.1, 1, false, true)
-                if a then task.wait(a.Length / getAnimSpeed(a) * 0.9) end
-            else task.wait(0.35) end
-            if not model.Parent or not targetHum.Parent then return end
-            local pos = targetRoot.Position
-            local archivable = model.Archivable
-            model.Archivable = true
-            corpseContainer = Instance.new("Folder")
-            corpseContainer.Name = "LocustCorpse"
-            corpseContainer.Parent = workspace
-            local ok, c = pcall(function() return model:Clone() end)
-            model.Archivable = archivable
-            if ok and c then
-                corpse = c
-                corpse.Name = model.Name .. "_Corpse"
-                for _, d in ipairs(corpse:GetDescendants()) do
-                    if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript")
-                        or d:IsA("Animator") or d:IsA("BodyMover") or d:IsA("ForceField") then
-                        d:Destroy()
-                    elseif d:IsA("BasePart") then
-                        d.Anchored=false; d.CanCollide = d.Name ~= "HumanoidRootPart"
-                        d.CanTouch=false; d.CanQuery=false; d.Massless=false
-                        d.LocalTransparencyModifier = 0
-                        d.AssemblyLinearVelocity = Vector3.zero
-                        d.AssemblyAngularVelocity = Vector3.zero
-                        if d.Name == "HumanoidRootPart" then d.Transparency = 1 end
-                    elseif d:IsA("Humanoid") then
-                        d.AutoRotate=false; d.PlatformStand=true; d.RequiresNeck=false
-                        d.BreakJointsOnDeath=false; d.EvaluateStateMachine=false
-                        pcall(function() d:ChangeState(Enum.HumanoidStateType.Physics) end)
-                    end
-                end
-                for _, d in ipairs(corpse:GetDescendants()) do
-                    if d:IsA("Motor6D") and d.Part0 and d.Part1 then
-                        local a0 = Instance.new("Attachment"); a0.CFrame = d.C0; a0.Parent = d.Part0
-                        local a1 = Instance.new("Attachment"); a1.CFrame = d.C1; a1.Parent = d.Part1
-                        local bs = Instance.new("BallSocketConstraint")
-                        bs.Attachment0=a0; bs.Attachment1=a1
-                        bs.LimitsEnabled=true; bs.TwistLimitsEnabled=true
-                        bs.MaxFrictionTorque=10; bs.Parent = d.Part0
-                        d:Destroy()
-                    end
-                end
-                corpse.Parent = corpseContainer
-                pcall(function() corpse:PivotTo(model:GetPivot()) end)
-                local launch = corpse:FindFirstChild("UpperTorso") or corpse:FindFirstChild("Torso")
-                    or corpse:FindFirstChild("HumanoidRootPart") or corpse:FindFirstChildWhichIsA("BasePart")
-                if launch then
-                    local dir = (hrp.CFrame.LookVector + Vector3.new(0, 0.9, 0)).Unit
-                    launch.AssemblyLinearVelocity = dir * math.random(40, 55)
-                    launch.AssemblyAngularVelocity = Vector3.new(math.random(-18,18), math.random(-18,18), math.random(-18,18))
-                end
-            end
-            targetRoot.Anchored = false
-            if Players:GetPlayerFromCharacter(model) then
-                targetHum.WalkSpeed = 0; targetHum.AutoRotate = false
-                targetHum.BreakJointsOnDeath = false
-                pcall(function() targetHum.Health = 0 end)
-                pcall(function() model:BreakJoints() end)
-            else
-                task.spawn(function() locustVoidKill(model) end)
-            end
-            success = true
-            if corpse then
-                for _ = 1, 28 do
-                    local p = Instance.new("Part")
-                    p.Size = Vector3.new(math.random(6,12)/10, math.random(6,12)/10, math.random(6,12)/10)
-                    p.Color = Color3.fromRGB(math.random(55,105), math.random(0,5), math.random(0,5))
-                    p.Material = Enum.Material.SmoothPlastic
-                    p.CanCollide=false; p.CanQuery=false
-                    p.CFrame = CFrame.new(pos + Vector3.new(math.random(-7,7)/10, math.random(0,18)/10, math.random(-7,7)/10))
-                    p.Parent = corpseContainer
-                    p.AssemblyLinearVelocity = Vector3.new(math.random(-38,38), math.random(35,65), math.random(-38,38))
-                    p.AssemblyAngularVelocity = Vector3.new(math.random(-32,32), math.random(-32,32), math.random(-32,32))
-                    Debris:AddItem(p, 5)
-                end
-                task.delay(6, function()
-                    if corpseContainer and corpseContainer.Parent then
-                        for _, d in ipairs(corpseContainer:GetDescendants()) do
-                            if d:IsA("BasePart") then
-                                TweenService:Create(d, TweenInfo.new(1), {Transparency=1}):Play()
-                            end
-                        end
-                        Debris:AddItem(corpseContainer, 2)
-                    end
-                end)
-            end
-        end, function(err) warn("[Locust Kill] " .. tostring(err)) end)
-        if not success then
-            if targetHum and targetHum.Parent then
-                targetHum.WalkSpeed = origWalk; targetHum.AutoRotate = origAuto
-            end
-            if targetRoot and targetRoot.Parent then targetRoot.Anchored = false end
-            if corpseContainer and corpseContainer.Parent then corpseContainer:Destroy() end
-        end
-        hrp.Anchored = false
-        v5.Input.Debounce = false
-    end
-
-    L.locustKill = locustKill
-
-    toggleLocustInstinct = function()
-        Locust.instinct = not Locust.instinct
-        if instinctLabelUI then
-            instinctLabelUI.Text = Locust.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
-            instinctLabelUI.TextColor3 = Locust.instinct and CONFIG.NEON_D or CONFIG.NEON_C
-        end
-        if Locust.instinct then
-            sfx(SND.ui, 0.9, 1.3)
-            task.spawn(function()
-                while Locust.instinct and Locust.mounted do
-                    task.wait(0.15)
-                    if Locust.mounted and not v5.Input.Debounce then
-                        local best, bestDist = nil, 30
-                        for _, m in ipairs(workspace:GetDescendants()) do
-                            if m:IsA("Model") and m ~= character and m ~= locustVisual then
-                                local h = m:FindFirstChildOfClass("Humanoid")
-                                if h and h.Health > 0 and not Players:GetPlayerFromCharacter(m) then
-                                    local root = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso")
-                                    if root and root:IsA("BasePart") then
-                                        local d = (root.Position - hrp.Position).Magnitude
-                                        if d < bestDist then best, bestDist = root, d end
-                                    end
-                                end
-                            end
-                        end
-                        if best then locustKill(best) end
-                    end
-                end
-            end)
-        end
-    end
-
-    local inConn = UserInputService.InputBegan:Connect(function(input, gp)
-        if gp then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            task.spawn(locustKill, mouse.Target)
-        elseif input.KeyCode == Enum.KeyCode.Q then
-            v5.Movement.Crouching = not v5.Movement.Crouching
-        elseif input.KeyCode == Enum.KeyCode.C then
-            v5.Movement.Sitting = not v5.Movement.Sitting
-        end
+        task.wait(1)
+        if animator then animator.Parent = hum end
+        hum.WalkSpeed = origWalk
+        clone:Destroy()
     end)
-    table.insert(v3.ActiveConnections, inConn)
+    Gojo.tools.hp = hpTool
 
-    local hbConn = RunService.Heartbeat:Connect(function()
-        if not Locust.mounted then return end
-        if locustVisual and locustVisual.Parent and hrp and hrp.Parent then
-            pcall(function() locustVisual:PivotTo(hrp.CFrame) end)
-        end
-        if currentCamera and v1.Settings.FOVEffects and locustTheme then
-            currentCamera.FieldOfView = 70 + math.clamp(locustTheme.PlaybackLoudness / 100, 0, 20)
-        end
-        local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-        if v5.Movement.Sitting then humanoid.WalkSpeed = 0
-        elseif v5.Movement.Crouching then humanoid.WalkSpeed = 3
-        elseif shift or v5.Input.MobileSprint then humanoid.WalkSpeed = 24
-        else humanoid.WalkSpeed = 6 end
-    end)
-    table.insert(v3.ActiveConnections, hbConn)
+    -- ★ UNLIMITED PURPLE TOOL ★
+    local upTool = createTool("Unlimited Hollow Purple")
+    upTool.Activated:Connect(function()
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp then return end
+        local origWalk = hum.WalkSpeed
+        local origHip = hum.HipHeight
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then animator.Parent = nil end
+        hum.WalkSpeed = 0
 
-    Locust.cleanup = function()
-        Locust.instinct = false
-        if v2.Rigs then
-            for _, rig in pairs(v2.Rigs) do
-                for _, a in pairs(rig) do pcall(function() a:Stop() end) end
+        local rbx = safeGetObjects("Gojo.rbxmx")
+        if not rbx then
+            hum.WalkSpeed = origWalk
+            if animator then animator.Parent = hum end
+            return
+        end
+        rbx.Parent = ReplicatedStorage
+
+        local cfg = dmgLib.Config.UnlimitedPurple
+        local effects = rbx:FindFirstChild("Effects"):FindFirstChild("UnlimitedPurple")
+
+        local blue = effects:FindFirstChild("Blue") and effects:FindFirstChild("Blue"):Clone()
+        local red = effects:FindFirstChild("Red") and effects:FindFirstChild("Red"):Clone()
+        local purple = effects:FindFirstChild("Purple") and effects:FindFirstChild("Purple"):Clone()
+        local explode = effects:FindFirstChild("PurpleExplode") and effects:FindFirstChild("PurpleExplode"):Clone()
+
+        local s = Instance.new("Sound")
+        s.SoundId = typeof(getcustomasset) == "function" and getcustomasset("UnlimitedPurple.mp3") or ""
+        s.Volume = 1; s.Parent = workspace
+        pcall(function() s:Play() end)
+
+        task.wait(3)
+
+        if blue then
+            blue.Anchored = true; blue.CanCollide = false
+            blue.CFrame = hrp.CFrame * CFrame.new(0, 0, -5)
+            blue.Parent = workspace
+            local startPos = blue.CFrame
+            local start = os.clock()
+            local conn
+            conn = RunService.Heartbeat:Connect(function()
+                local t = (os.clock() - start) * 3.8
+                blue.CFrame = hrp.CFrame * CFrame.new(math.cos(t)*32, 4, math.sin(t)*32) * CFrame.Angles(0, t*1.6, 0)
+            end)
+            local contact = dmgLib.Contact({
+                Part = blue, Radius = cfg.BlueContactRadius, Lethal = cfg.BlueContactLethal,
+                Fraction = cfg.BlueContactFraction, Cooldown = cfg.BlueContactCooldown,
+            })
+            task.wait(2.5)
+            if red then
+                red.Anchored = true; red.CanCollide = false
+                red.CFrame = hrp.CFrame * CFrame.new(0, 6, -6)
+                red.Parent = workspace
+                TweenService:Create(red, TweenInfo.new(1), {CFrame = red.CFrame * CFrame.new(0, 100, 0)}):Play()
+                dmgLib.Pulse({
+                    Position = hrp.Position, Radius = cfg.RedPulseRadius,
+                    Lethal = cfg.RedPulseLethal, Fraction = cfg.RedPulseFraction,
+                })
+            end
+            task.wait(3)
+            TweenService:Create(hum, TweenInfo.new(9), {HipHeight = origHip + 90}):Play()
+            task.wait(5)
+            if conn then conn:Disconnect() end
+            if contact then contact.Stop() end
+            if blue then TweenService:Create(blue, TweenInfo.new(1.2), {CFrame = hrp.CFrame * CFrame.new(0, 18, 0)}):Play() end
+            if red then TweenService:Create(red, TweenInfo.new(1.2), {CFrame = hrp.CFrame * CFrame.new(0, 18, 0)}):Play() end
+            task.wait(2)
+            if blue then blue:Destroy() end
+            if red then red:Destroy() end
+            if purple then
+                purple.Anchored = true
+                purple.CFrame = hrp.CFrame * CFrame.new(0, 22, 0)
+                purple.Parent = workspace
+                task.wait(2.3)
+                purple:Destroy()
+            end
+            if explode then
+                explode.Anchored = true
+                explode.CFrame = hrp.CFrame * CFrame.new(0, 22, 0)
+                explode.Parent = workspace
+                dmgLib.Explosion({
+                    Position = explode.Position, LethalRadius = cfg.ExplosionLethalRadius,
+                    MaxRadius = cfg.ExplosionMaxRadius, EdgeFraction = cfg.ExplosionEdgeFraction,
+                    ExpandTime = cfg.ExplosionExpandTime,
+                })
+                Debris:AddItem(explode, 8)
             end
         end
-        for _, t in pairs(v2.ActiveTweens) do pcall(function() t:Cancel() end) end
-        v2.ActiveTweens = {}
-        if locustVisual then pcall(function() locustVisual:Destroy() end); locustVisual = nil end
-        if locustTheme then pcall(function() locustTheme:Destroy() end); locustTheme = nil end
-        for d, v in pairs(locustOrigTransp) do
-            pcall(function() if d.Parent then d.Transparency = v end end)
-        end
-        locustOrigTransp = {}
-        if hideConn then pcall(function() hideConn:Disconnect() end) end
-        if humanoid and humanoid.Parent then
-            humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
-            pcall(function()
-                humanoid.WalkSpeed = L.origWalk or 16
-                humanoid.JumpPower = L.origJump or 50
+
+        task.wait(2)
+        if animator then animator.Parent = hum end
+        hum.WalkSpeed = origWalk
+        hum.HipHeight = origHip
+        rbx:Destroy()
+    end)
+    Gojo.tools.up = upTool
+
+    -- ★ IMAGINARY PURPLE TOOL ★
+    local ipTool = createTool("Imaginary Hollow Purple")
+    ipTool.Activated:Connect(function()
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp then return end
+        local origWalk = hum.WalkSpeed
+        hum.WalkSpeed = 0
+
+        local rbx = safeGetObjects("Gojo.rbxmx")
+        if not rbx then hum.WalkSpeed = origWalk; return end
+        rbx.Parent = ReplicatedStorage
+
+        local cfg = dmgLib.Config.ImaginaryPurple
+        local effects = rbx:FindFirstChild("Effects"):FindFirstChild("ImaginaryPurple")
+
+        local s = Instance.new("Sound")
+        s.SoundId = typeof(getcustomasset) == "function" and getcustomasset("ImaginaryPurple.mp3") or ""
+        s.Volume = 1; s.Parent = workspace
+        pcall(function() s:Play() end)
+
+        task.wait(9)
+
+        local shoot = effects:FindFirstChild("PurpleShoot")
+        if shoot then
+            local clone = shoot:Clone()
+            clone.Anchored = true; clone.CanCollide = false
+            for _, d in ipairs(clone:GetDescendants()) do
+                if d:IsA("BasePart") then d.Anchored = true; d.CanCollide = false end
+            end
+            clone.CFrame = hrp.CFrame * CFrame.new(0, 6, 0)
+            clone.Parent = workspace
+            local lv = hrp.CFrame.LookVector
+            local cf = clone.CFrame
+            local start = os.clock()
+            local conn
+            conn = RunService.Heartbeat:Connect(function()
+                if os.clock() - start >= 15 or not clone.Parent then conn:Disconnect(); return end
+                cf = cf + lv * 275 * 0.016
+                clone.CFrame = cf
             end)
+            Debris:AddItem(clone, 15)
+            dmgLib.Sweep({
+                Part = clone, Radius = cfg.HitRadius, Lethal = cfg.Lethal,
+                DirectFraction = cfg.DirectFraction, ShockRadius = cfg.ShockwaveRadius,
+                ShockFraction = cfg.ShockwaveFraction, Duration = 15,
+            })
         end
-        for _, c in ipairs(v3.ActiveConnections) do pcall(function() c:Disconnect() end) end
-        v3.ActiveConnections = {}
-        if currentCamera then currentCamera.FieldOfView = 70 end
-        if locustModel then pcall(function() locustModel:Destroy() end) end
-        for _, ui in ipairs(v3.TrashBin) do pcall(function() ui:Destroy() end) end
-        v3.TrashBin = {}
+
+        hum.WalkSpeed = origWalk
+        rbx:Destroy()
+    end)
+    Gojo.tools.ip = ipTool
+
+    -- ★ INFINITE VOID TOOL ★
+    local ivTool = createTool("Infinite Void")
+    ivTool.Activated:Connect(function()
+        local char = lp.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp then return end
+        local origWalk = hum.WalkSpeed
+        hum.WalkSpeed = 0
+
+        local cfg = dmgLib.Config.InfiniteVoid
+        local domain = dmgLib.Domain({
+            Position = hrp.Position, Radius = cfg.Radius,
+            TickInterval = cfg.TickInterval, Duration = 24,
+            TotalFraction = cfg.TotalDamageFraction, Paralyze = cfg.Paralyze,
+            FreezeInPlace = cfg.FreezeInPlace, KillOnCollapse = cfg.KillOnCollapse,
+        })
+
+        local s = Instance.new("Sound")
+        s.SoundId = typeof(getcustomasset) == "function" and getcustomasset("Domain.mp3") or ""
+        s.Volume = 1; s.Parent = workspace
+        pcall(function() s:Play() end)
+
+        task.wait(24)
+        if domain then domain.Collapse() end
+        hum.WalkSpeed = origWalk
+    end)
+    Gojo.tools.iv = ivTool
+
+    -- Domain method (needed for ivTool)
+    function dmgLib.Domain(opts)
+        local pos = opts.Position
+        local radius = opts.Radius or 200
+        local tick = opts.TickInterval or 0.5
+        local dur = opts.Duration or 24
+        local totalFrac = opts.TotalFraction or 1
+        local paralyze = opts.Paralyze ~= false
+        local freeze = opts.FreezeInPlace ~= false
+        local killOnCollapse = opts.KillOnCollapse ~= false
+        local instant = opts.InstantEraseOnOpen ~= false
+        local victims = {}
+        local t0 = os.clock()
+        local nextTick = t0
+        local numTicks = instant and 0 or math.max(1, math.floor(dur / tick + 0.5))
+        local perTick = instant and 0 or totalFrac / numTicks
+        local tickCount = 0
+        local conn
+
+        local function catch(eraseNow)
+            for _, t in ipairs(dmgLib.GetTargets()) do
+                if not victims[t.Humanoid] then
+                    if distTo(t, pos) <= radius then
+                        victims[t.Humanoid] = { Target = t, Saved = {
+                            WalkSpeed = t.Humanoid.WalkSpeed,
+                            JumpPower = t.Humanoid.JumpPower,
+                            AutoRotate = t.Humanoid.AutoRotate,
+                            Anchored = t.Root.Anchored,
+                        }}
+                        if paralyze then
+                            pcall(function()
+                                t.Humanoid.WalkSpeed = 0; t.Humanoid.JumpPower = 0
+                                t.Humanoid.AutoRotate = false
+                                if freeze then t.Root.Anchored = true end
+                            end)
+                        end
+                        if eraseNow then dmgLib.Hurt(t, math.huge, "VOID", dmgLib.Colors.Void, true) end
+                    end
+                end
+            end
+        end
+
+        if instant then catch(true) end
+
+        conn = RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if instant then
+                catch(true)
+                if now - t0 >= dur then conn:Disconnect() end
+                return
+            end
+            while tickCount < numTicks and now >= nextTick do
+                tickCount = tickCount + 1
+                nextTick = nextTick + tick
+                catch(false)
+                for h, v in pairs(victims) do
+                    if h.Health > 0 then dmgLib.Hurt(v.Target, h.MaxHealth * perTick, nil, dmgLib.Colors.Void) end
+                end
+            end
+            if tickCount >= numTicks then conn:Disconnect() end
+        end)
+
+        return {
+            Collapse = function()
+                if conn then conn:Disconnect() end
+                for h, v in pairs(victims) do
+                    if killOnCollapse and h.Health > 0 then dmgLib.Hurt(v.Target, math.huge, "VOID", dmgLib.Colors.Void) end
+                    if paralyze then
+                        pcall(function()
+                            h.WalkSpeed = v.Saved.WalkSpeed; h.JumpPower = v.Saved.JumpPower
+                            h.AutoRotate = v.Saved.AutoRotate
+                            v.Target.Root.Anchored = v.Saved.Anchored
+                        end)
+                    end
+                end
+            end,
+        }
     end
 
-    warn("[Locust] ✔✔ mountLocust() COMPLETE")
+    -- Give tools to backpack
+    local bp = lp:WaitForChild("Backpack")
+    for _, tool in pairs(Gojo.tools) do
+        tool.Parent = bp
+    end
+
+    warn("[Gojo] ✔ Mounted — 4 tools in backpack")
+
+    -- Gojo cleanup
+    Gojo.cleanup = function()
+        for name, tool in pairs(Gojo.tools) do
+            pcall(function() tool:Destroy() end)
+        end
+        Gojo.tools = {}
+    end
 end
 
-unmountLocust = function()
-    if not Locust.mounted then return end
-    if Locust.cleanup then pcall(Locust.cleanup) end
-    Locust.cleanup = nil
-    Locust.mounted = false
+unmountGojo = function()
+    if not Gojo.mounted then return end
+    Gojo.instinct = false
+    if Gojo.cleanup then pcall(Gojo.cleanup) end
+    Gojo.cleanup = nil
+    Gojo.mounted = false
     sfx(SND.ui, 0.7, 0.9)
+end
+
+toggleGojoInstinct = function()
+    Gojo.instinct = not Gojo.instinct
+    if instinctLabelUI then
+        instinctLabelUI.Text = Gojo.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
+        instinctLabelUI.TextColor3 = Gojo.instinct and CONFIG.NEON_D or CONFIG.NEON_C
+    end
+    if Gojo.instinct then
+        sfx(SND.ui, 0.9, 1.3)
+        task.spawn(function()
+            while Gojo.instinct and Gojo.mounted do
+                task.wait(0.25)
+                local char = player.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local best, bestDist = nil, 30
+                    for _, m in ipairs(workspace:GetDescendants()) do
+                        if m:IsA("Model") and m ~= char then
+                            local h = m:FindFirstChildOfClass("Humanoid")
+                            if h and h.Health > 0 and not Players:GetPlayerFromCharacter(m) then
+                                local root = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso")
+                                if root and root:IsA("BasePart") then
+                                    local d = (root.Position - hrp.Position).Magnitude
+                                    if d < bestDist then best, bestDist = m, d end
+                                end
+                            end
+                        end
+                    end
+                    if best then pcall(voidKill, best) end
+                end
+            end
+        end)
+    end
 end
 
 gtrack(player.CharacterAdded:Connect(function()
@@ -2170,10 +2420,10 @@ gtrack(player.CharacterAdded:Connect(function()
         task.wait(0.6)
         task.spawn(mount)
     end
-    if Locust.mounted then
-        unmountLocust()
+    if Gojo.mounted then
+        unmountGojo()
         task.wait(0.6)
-        task.spawn(mountLocust)
+        task.spawn(mountGojo)
     end
 end))
 
@@ -2250,7 +2500,7 @@ local function setupUI()
     }, hub)
     corner(tabBar, UDim.new(0, 8))
 
-    local tabSoulBtn, tabLocustBtn
+    local tabSoulBtn, tabGojoBtn
 
     local function makeTabBtn(label, xPos, initialPos)
         local btn = new("TextButton", {
@@ -2267,7 +2517,7 @@ local function setupUI()
     end
 
     tabSoulBtn = makeTabBtn("SOUL", 0)
-    tabLocustBtn = makeTabBtn("LOCUST", 0.5, UDim2.new(0.5, 3, 0, 2))
+    tabGojoBtn = makeTabBtn("GOJO", 0.5, UDim2.new(0.5, 3, 0, 2))
 
     local lblMorph, lblInstinct
 
@@ -2278,7 +2528,7 @@ local function setupUI()
             btn:FindFirstChildOfClass("TextLabel").TextColor3 = on and CONFIG.NEON_A or Color3.fromRGB(150,140,150)
         end
         if which == "soul" then
-            setActive(tabSoulBtn, true); setActive(tabLocustBtn, false)
+            setActive(tabSoulBtn, true); setActive(tabGojoBtn, false)
             if lblMorph then
                 lblMorph.Text = S.mounted and "UNMORPH" or "MORPH"
                 lblMorph.TextColor3 = S.mounted and CONFIG.NEON_B or CONFIG.NEON_A
@@ -2288,21 +2538,21 @@ local function setupUI()
                 lblInstinct.TextColor3 = soulInstinct and CONFIG.NEON_D or CONFIG.NEON_C
             end
         else
-            setActive(tabSoulBtn, false); setActive(tabLocustBtn, true)
+            setActive(tabSoulBtn, false); setActive(tabGojoBtn, true)
             if lblMorph then
-                lblMorph.Text = Locust.mounted and "UNMORPH" or "MORPH"
-                lblMorph.TextColor3 = Locust.mounted and CONFIG.NEON_B or CONFIG.NEON_A
+                lblMorph.Text = Gojo.mounted and "UNMORPH" or "MORPH"
+                lblMorph.TextColor3 = Gojo.mounted and CONFIG.NEON_B or CONFIG.NEON_A
             end
             if lblInstinct then
-                lblInstinct.Text = Locust.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
-                lblInstinct.TextColor3 = Locust.instinct and CONFIG.NEON_D or CONFIG.NEON_C
+                lblInstinct.Text = Gojo.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
+                lblInstinct.TextColor3 = Gojo.instinct and CONFIG.NEON_D or CONFIG.NEON_C
             end
         end
         if buildMobilePad then buildMobilePad(which) end
     end
 
     tabSoulBtn.Activated:Connect(function() sfx(SND.ui, 0.4, 1.1); switchTab("soul") end)
-    tabLocustBtn.Activated:Connect(function() sfx(SND.ui, 0.4, 1.1); switchTab("locust") end)
+    tabGojoBtn.Activated:Connect(function() sfx(SND.ui, 0.4, 1.1); switchTab("gojo") end)
 
     local function hubBtn(label, col, yPos, size, cb)
         local b = new("TextButton", {
@@ -2333,19 +2583,19 @@ local function setupUI()
                 end)
             end
         else
-            if Locust.mounted then
-                unmountLocust(); lblMorph.Text = "MORPH"; lblMorph.TextColor3 = CONFIG.NEON_A
+            if Gojo.mounted then
+                unmountGojo(); lblMorph.Text = "MORPH"; lblMorph.TextColor3 = CONFIG.NEON_A
             else
                 task.spawn(function()
-                    mountLocust()
-                    if Locust.mounted then lblMorph.Text = "UNMORPH"; lblMorph.TextColor3 = CONFIG.NEON_B end
+                    mountGojo()
+                    if Gojo.mounted then lblMorph.Text = "UNMORPH"; lblMorph.TextColor3 = CONFIG.NEON_B end
                 end)
             end
         end
     end)
 
     hubBtn("REVERT", CONFIG.NEON_B, 114, UDim2.new(1, -20, 0, 42), function()
-        if activeTab == "soul" then unmount() else unmountLocust() end
+        if activeTab == "soul" then unmount() else unmountGojo() end
         lblMorph.Text = "MORPH"; lblMorph.TextColor3 = CONFIG.NEON_A
     end)
 
@@ -2362,7 +2612,9 @@ local function setupUI()
             lblInstinct.Text = soulInstinct and "INSTINCT: ON" or "INSTINCT: OFF"
             lblInstinct.TextColor3 = soulInstinct and CONFIG.NEON_D or CONFIG.NEON_C
         else
-            if toggleLocustInstinct then toggleLocustInstinct() end
+            toggleGojoInstinct()
+            lblInstinct.Text = Gojo.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
+            lblInstinct.TextColor3 = Gojo.instinct and CONFIG.NEON_D or CONFIG.NEON_C
         end
     end)
     instinctLabelUI = lblInstinct
@@ -2388,7 +2640,6 @@ local function setupUI()
 
     local cDragging, cDragStart, cStartPos, cMoved = false, nil, nil, 0
     local lastTapTime = 0
-    local DOUBLE_TAP_WINDOW = 0.4
     circle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
@@ -2421,7 +2672,7 @@ local function setupUI()
         cDragging = false
         if cMoved < 8 then
             local now = tick()
-            local isDoubleTap = (now - lastTapTime) < DOUBLE_TAP_WINDOW
+            local isDoubleTap = (now - lastTapTime) < 0.4
             lastTapTime = now
             sfx(SND.ui, 0.5, 1.0)
             if isDoubleTap then
@@ -2471,27 +2722,18 @@ local function setupUI()
             mBtn("DUMMY", CONFIG.NEON_C, 48, 90, 48, spawnDummy)
             mBtn("QUAD",  CONFIG.NEON_C, 112, 85, 58, function() S.quad = true end, function() S.quad = false end)
         else
-            mBtn("KILL", CONFIG.NEON_A, 140, 180, 90, function()
-                if Locust.state and Locust.state.locustKill then
-                    local mouse = player:GetMouse()
-                    if mouse and mouse.Target then task.spawn(Locust.state.locustKill, mouse.Target) end
-                end
-            end)
-            mBtn("CROUCH", CONFIG.NEON_C, 50, 100, 52, function()
-                if Locust.state and Locust.state.v5 then Locust.state.v5.Movement.Crouching = not Locust.state.v5.Movement.Crouching end
-            end)
-            mBtn("SIT", CONFIG.NEON_C, 50, 200, 52, function()
-                if Locust.state and Locust.state.v5 then Locust.state.v5.Movement.Sitting = not Locust.state.v5.Movement.Sitting end
-            end)
-            mBtn("SPRINT", CONFIG.NEON_C, 50, 280, 52, function()
-                if Locust.state and Locust.state.v5 then Locust.state.v5.Input.MobileSprint = not Locust.state.v5.Input.MobileSprint end
-            end)
+            -- Gojo: just show a hint (tools are in backpack)
+            local hint = new("TextLabel", {BackgroundTransparency=0.5, BackgroundColor3=Color3.new(0,0,0),
+                Size=UDim2.fromOffset(220, 60), Position=UDim2.fromOffset(5, 100),
+                Font=FONT, Text="USE TOOLS IN BACKPACK\n(tap tool icon)", TextScaled=true,
+                TextColor3=CONFIG.NEON_A, ZIndex=87}, mobilePad)
+            corner(hint, UDim.new(0, 8))
         end
     end
     buildMobilePad("soul")
 
     gtrack(RunService.RenderStepped:Connect(function()
-        if mobilePad then mobilePad.Visible = (S.mounted or Locust.mounted) and not menuOpen end
+        if mobilePad then mobilePad.Visible = (S.mounted or Gojo.mounted) and not menuOpen end
     end))
     gtrack(RunService.Heartbeat:Connect(checkRespawns))
 end
@@ -2500,9 +2742,13 @@ gtrack(UserInputService.InputBegan:Connect(function(input, gp)
     if input.KeyCode == CONFIG.MENU_KEY then return end
     if gp or menuOpen then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if Locust.mounted then return end
+        if Gojo.mounted then return end
         if not S.mounted then return end
         if S.ctrlHeld then actHeadEat() else actSwipe() end
+        return
+    end
+    if input.KeyCode == CONFIG.INSTINCT_KEY then
+        if activeTab == "soul" then toggleSoulInstinct() else toggleGojoInstinct() end
         return
     end
     if not S.mounted then return end
@@ -2514,9 +2760,6 @@ gtrack(UserInputService.InputBegan:Connect(function(input, gp)
     elseif input.KeyCode == Enum.KeyCode.G then actHeadEat()
     elseif input.KeyCode == Enum.KeyCode.F then actCurse()
     elseif input.KeyCode == Enum.KeyCode.H then actRoar()
-    elseif input.KeyCode == CONFIG.INSTINCT_KEY then
-        if activeTab == "soul" then toggleSoulInstinct()
-        elseif toggleLocustInstinct then toggleLocustInstinct() end
     elseif input.KeyCode == Enum.KeyCode.R then finishAttack()
     elseif input.KeyCode == Enum.KeyCode.T then spawnDummy()
     elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
@@ -2530,15 +2773,12 @@ gtrack(UserInputService.InputEnded:Connect(function(input)
     end
 end))
 
--- ============================================================
---  INIT
--- ============================================================
 local function cleanup()
     unmount()
-    unmountLocust()
+    unmountGojo()
     setShiftlock(false)
     soulInstinct = false
-    Locust.instinct = false
+    Gojo.instinct = false
     for _, c in ipairs(globalConns) do pcall(function() c:Disconnect() end) end
     for _, rec in pairs(victims) do pcall(restoreVictim, rec, true) end
     local gui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("HalloweenSoul_v3")
@@ -2550,12 +2790,9 @@ genv.__HALLOWEEN_SOUL_V3 = cleanup
 
 warn("[Init] Building UI...")
 local ok_ui, err_ui = pcall(setupUI)
-if not ok_ui then warn("[Init] ✘ setupUI CRASHED: " .. tostring(err_ui)) else warn("[Init] ✔ UI ready") end
+if not ok_ui then warn("[Init] setupUI crashed: " .. tostring(err_ui)) end
 
-warn("[Init] Preloading soul template...")
-task.spawn(function()
-    local ok_tpl, err_tpl = pcall(loadTemplate)
-    if not ok_tpl then warn("[Init] ✘ loadTemplate crashed: " .. tostring(err_tpl)) end
-end)
+warn("[Init] Preloading Soul template...")
+task.spawn(function() pcall(loadTemplate) end)
 
-warn("[Init] ✔✔ Script loaded. Click the ☰ circle top-right.")
+warn("[Init] Ready. Click ☰ top-right.")
