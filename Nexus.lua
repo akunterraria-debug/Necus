@@ -1,7 +1,6 @@
 -- ============================================================
---  HALLOWEEN SOUL + LOCUST — Dual Tab Hub
---  Soul: pumpkin morph with 8 abilities
---  Locust: MelonsStuff Locust with void-kill + instinct
+--  HALLOWEEN SOUL + LOCUST — Dual Tab Hub (FIXED)
+--  Bug fix: Locust forward-declared before mount()
 -- ============================================================
 local CONFIG = {
     MODEL_NAME        = "Halloween Soul",
@@ -64,7 +63,8 @@ local menuOpen = false
 local actRip, actSlam, actDevour, actCurse, actSwipe, actHeadEat, actRoar, spawnDummy
 local openMenu, closeMenu
 local instinctLabelUI
-local toggleSoulInstinct
+local activeTab = "soul"
+local buildMobilePad
 
 -- ===== SOUL STATE =====
 local S = {
@@ -83,6 +83,16 @@ local S = {
 }
 local soulInstinct = false
 local shiftlockOn = false
+
+-- ============================================================
+--  ★★★ CRITICAL FIX: LOCUST FORWARD DECLARATIONS ★★★
+--  These MUST come before mount()/unmount(), otherwise
+--  mount() crashes on `Locust.mounted` (nil.mounted error)
+--  which aborts the whole thing before loadTemplate() runs.
+-- ============================================================
+local Locust = { mounted = false, instinct = false, cleanup = nil, state = {} }
+local toggleLocustInstinct = function() end
+local mountLocust, unmountLocust
 
 local fxFolder = Instance.new("Folder")
 fxFolder.Name = "HalloweenSoul_FX_v3"
@@ -700,37 +710,57 @@ local function loadTemplate()
     if template then return template end
     if templateLoading then while templateLoading do task.wait() end return template end
     templateLoading = true
+    warn("[Soul] Loading asset " .. tostring(CONFIG.ASSET_ID) .. "...")
     local raw
     local found = workspace:FindFirstChild(CONFIG.MODEL_NAME, true)
         or ReplicatedStorage:FindFirstChild(CONFIG.MODEL_NAME, true)
         or Lighting:FindFirstChild(CONFIG.MODEL_NAME, true)
     if found and found:IsA("Model") then
+        warn("[Soul] Found existing model in workspace, cloning...")
         local ok, c = pcall(function() found.Archivable = true; return found:Clone() end)
         if ok and c then raw = c end
     end
     if not raw and CONFIG.ASSET_ID and CONFIG.ASSET_ID > 0 then
         local url = "rbxassetid://" .. CONFIG.ASSET_ID
         local tries = {
-            function() return game:GetObjects(url) end,
-            function() return getobjects and getobjects(game, url) end,
-            function() return InsertService:LoadLocalAsset(url) end,
-            function() return InsertService:LoadAsset(CONFIG.ASSET_ID) end,
+            {name="game:GetObjects", fn=function() return game:GetObjects(url) end},
+            {name="getobjects", fn=function() return getobjects and getobjects(game, url) end},
+            {name="LoadLocalAsset", fn=function() return InsertService:LoadLocalAsset(url) end},
+            {name="LoadAsset", fn=function() return InsertService:LoadAsset(CONFIG.ASSET_ID) end},
         }
-        for _, f in ipairs(tries) do
+        for _, t in ipairs(tries) do
             if raw then break end
-            local ok, res = pcall(f)
+            warn("[Soul] Trying " .. t.name .. "...")
+            local ok, res = pcall(t.fn)
             if ok and res then
                 if typeof(res) == "table" then
                     local h = Instance.new("Model")
                     for _, i in ipairs(res) do if typeof(i) == "Instance" then i.Parent = h end end
                     raw = h
+                    warn("[Soul] ✔ " .. t.name .. " succeeded")
                 elseif typeof(res) == "Instance" then
-                    raw = res:IsA("Model") and res or nil
+                    if res:IsA("Model") then
+                        raw = res
+                        warn("[Soul] ✔ " .. t.name .. " succeeded")
+                    else
+                        warn("[Soul] ✘ " .. t.name .. " returned non-Model")
+                    end
                 end
+            else
+                warn("[Soul] ✘ " .. t.name .. " failed: " .. tostring(res))
             end
         end
     end
-    if raw then stripModel(raw); template = raw else warn("[Soul] Failed to load model") end
+    if raw then
+        stripModel(raw)
+        template = raw
+        warn("[Soul] ✔ Template loaded (" .. #raw:GetDescendants() .. " descendants)")
+    else
+        warn("[Soul] ✘✘✘ FAILED TO LOAD ASSET " .. CONFIG.ASSET_ID .. " ✘✘✘")
+        warn("[Soul] All 4 loading methods failed.")
+        warn("[Soul] Your executor blocks asset loading OR the asset was deleted.")
+        warn("[Soul] Try a different executor (Delta, Solara, Wave).")
+    end
     templateLoading = false
     return template
 end
@@ -1530,15 +1560,26 @@ local function mount()
     if S.mounted or S.busy then return end
     if Locust.mounted then unmountLocust() end
     S.busy = true
+    warn("[Soul] ▶ mount() starting...")
     local tpl = loadTemplate()
-    if not tpl then S.busy = false; return end
+    if not tpl then
+        warn("[Soul] ✘ mount aborting — no template")
+        S.busy = false; return
+    end
     local model = tpl:Clone()
     local entries, parts, h = buildEntries(model)
-    if not entries then S.busy = false; return end
+    if not entries then
+        warn("[Soul] ✘ mount aborting — buildEntries nil")
+        S.busy = false; return
+    end
+    warn("[Soul] ✔ entries built: " .. #entries .. " parts, h=" .. tostring(h))
     local char = player.Character or player.CharacterAdded:Wait()
     local hum = char:WaitForChild("Humanoid", 10)
     local hrp = char:WaitForChild("HumanoidRootPart", 10)
-    if not (hum and hrp) then S.busy = false; return end
+    if not (hum and hrp) then
+        warn("[Soul] ✘ mount aborting — no humanoid/hrp")
+        S.busy = false; return
+    end
     S.character, S.humanoid, S.hrp = char, hum, hrp
     S.entries, S.parts, S.height, S.model, S.cfs = entries, parts, h, model, {}
     S.origWalk, S.origJump = hum.WalkSpeed, hum.JumpPower
@@ -1575,6 +1616,7 @@ local function mount()
     lightFlash(feet + UP*3, CONFIG.NEON_A, 10, 40, 0.7)
     sfx(SND.scare, 2.5, 0.9)
     S.busy = false
+    warn("[Soul] ✔✔ mount() COMPLETE — you should see the morph now")
 end
 local function unmount()
     if not S.mounted then return end
@@ -1608,46 +1650,49 @@ local function unmount()
 end
 
 -- ============================================================
---  LOCUST MODULE
+--  LOCUST MODULE (with forward decls already in place above)
 -- ============================================================
-local Locust = { mounted = false, instinct = false, cleanup = nil, state = {} }
-local function toggleLocustInstinct() end
-
-function mountLocust()
+mountLocust = function()
     if Locust.mounted then return end
     if S.mounted then unmount() end
     Locust.mounted = true
     sfx(SND.ui, 0.9, 0.8)
+    warn("[Locust] ▶ mountLocust() starting...")
+
+    if typeof(isfile) ~= "function" then
+        warn("[Locust] ✘ isfile not available — aborting")
+        Locust.mounted = false
+        return
+    end
+    if typeof(getcustomasset) ~= "function" then
+        warn("[Locust] ⚠ getcustomasset not available — model load will fail")
+    end
 
     local L = Locust.state
     L.v1 = {
-        Settings = { AnimationSpeed=1.25, Fling=false, Music=true, FOVEffects=true, CameraEffects=true, InfiniteJump=false },
-        Customization = { HitboxColor=Color3.fromRGB(255,255,255), Hitmarker=103397225855140, DeathExtraSounds={5801257793, 4988580332} },
-        FlingOptions = { HatFling=false, Highlight=false, PredictionFling=false, Timeout=0.5, ToolFling=false },
-        Reanimate_Settings = { Frequency=6, Amplification=6, FrontOffset=2.5 },
+        Settings = { AnimationSpeed=1.25, Music=true, FOVEffects=true, CameraEffects=true, InfiniteJump=false },
+        Customization = { Hitmarker=103397225855140, DeathExtraSounds={5801257793, 4988580332} },
         Blood = { CorpseLifetime=7, EmissionDuration=6, BigCubeLifetime=5, BigCubeCount=28, InitialSmallCount=90, WaveStartCount=22 },
     }
     L.v2 = { Joints={}, AnimDefaults={}, Rigs={}, ActiveTweens={} }
-    L.v3 = { StoredMotors={}, TrashBin={}, HitHumanoids={}, ActiveConnections={} }
+    L.v3 = { ActiveConnections={}, TrashBin={} }
     L.v4 = { Main="FEVerse/", RBXMs="FEVerse/RBXMs/", Sounds="FEVerse/Sounds/", Songs="FEVerse/Songs/" }
     L.v5 = {
         Movement = { Idle=false, Walking=false, Running=false, Crouching=false, Sitting=false },
         Input = { Debounce=false, Shift=false, MobileSprint=false, KillMode=true },
-        Waypoint = { SavedPosition=nil, TVLocation=nil },
     }
     local v1, v2, v3, v4, v5 = L.v1, L.v2, L.v3, L.v4, L.v5
 
-    -- Helper library
     local helper
     pcall(function()
-        local res = loadstring(game:HttpGet("https://gist.githubusercontent.com/MelonsStuff/a003ea305dd302eab1f8d372daed38b4/raw/9db59962b28555fd699a7c29891efb85d45677ab/gistfile1.txt"))
-        if res then helper = res() end
+        local src = game:HttpGet("https://gist.githubusercontent.com/MelonsStuff/a003ea305dd302eab1f8d372daed38b4/raw/9db59962b28555fd699a7c29891efb85d45677ab/gistfile1.txt")
+        local fn = loadstring(src)
+        if fn then helper = fn() end
     end)
     if not helper then
-        warn("[Locust] Helper failed — features limited")
+        warn("[Locust] Helper lib failed — features limited")
         helper = { EnsureFolder=function() end, DownloadFile=function() end }
     end
-    for _, folder in pairs(v4) do pcall(function() helper.EnsureFolder(folder) end) end
 
     local function notify(text)
         task.spawn(function()
@@ -1658,14 +1703,17 @@ function mountLocust()
     end
     notify("Loading Locust...")
 
-    if not isfile("FEVerse/RBXMs/Locust.rbxm") then
+    local path_model = "FEVerse/RBXMs/Locust.rbxm"
+    local path_music = "FEVerse/Songs/LocustTheme.mp3"
+
+    if not isfile(path_model) then
         notify("Downloading model...")
         pcall(function()
             helper.DownloadFile("FEVerse/RBXMs/", "Locust.rbxm",
                 "https://github.com/MelonsStuff/FEVerse/raw/refs/heads/main/RBXMs/Locust.rbxm")
         end)
     end
-    if not isfile("FEVerse/Songs/LocustTheme.mp3") then
+    if not isfile(path_music) then
         pcall(function()
             helper.DownloadFile("FEVerse/Songs/", "LocustTheme.mp3",
                 "https://github.com/MelonsStuff/FEVerse/raw/refs/heads/main/Songs/LocustTheme.mp3")
@@ -1673,27 +1721,29 @@ function mountLocust()
     end
 
     local function waitFile(path)
-        local count = 0
-        while not isfile(path) and count < 60 do task.wait(1); count = count + 1 end
+        local c = 0
+        while not isfile(path) and c < 60 do task.wait(1); c = c + 1 end
         return isfile(path)
     end
-    local hasModel = waitFile("FEVerse/RBXMs/Locust.rbxm")
-    local hasMusic = waitFile("FEVerse/Songs/LocustTheme.mp3")
+    local hasModel = waitFile(path_model)
+    local hasMusic = waitFile(path_music)
 
     local locustModel, animations, objects
     if hasModel then
+        warn("[Locust] Loading rbxm...")
         pcall(function()
-            local path = "FEVerse/RBXMs/Locust.rbxm"
-            if typeof(getcustomasset) == "function" then path = getcustomasset(path) end
-            locustModel = InsertService:LoadLocalAsset(path)
+            local p = path_model
+            if typeof(getcustomasset) == "function" then p = getcustomasset(p) end
+            locustModel = InsertService:LoadLocalAsset(p)
             if locustModel then
                 animations = locustModel:FindFirstChild("Animations")
                 objects = locustModel:FindFirstChild("Objects")
+                warn("[Locust] ✔ RBXM loaded")
             end
         end)
     end
     if not locustModel then
-        warn("[Locust] Failed to load model — aborting")
+        warn("[Locust] ✘ Failed to load model — aborting")
         Locust.mounted = false
         return
     end
@@ -1706,7 +1756,6 @@ function mountLocust()
     L.character = character; L.humanoid = humanoid; L.hrp = hrp
     L.origWalk = humanoid.WalkSpeed; L.origJump = humanoid.JumpPower
 
-    -- Animation system
     local function cancelTween(part)
         local t = v2.ActiveTweens[part]
         if t then v2.ActiveTweens[part] = nil; pcall(function() t:Cancel() end) end
@@ -1714,15 +1763,12 @@ function mountLocust()
     local function getAnimSpeed(anim)
         local s = 1
         if anim and type(anim.Speed) == "number" then s = math.abs(anim.Speed) end
-        local mult = tonumber(v1.Settings.AnimationSpeed) or 1
-        return math.max(0.01, s * math.max(0.01, mult))
+        return math.max(0.01, s * math.max(0.01, tonumber(v1.Settings.AnimationSpeed) or 1))
     end
     local function setTween(part, cf, dur)
         if not part or not part.Parent then return end
         cancelTween(part)
-        if dur and dur <= 0 then
-            pcall(function() part.CFrame = cf end); return
-        end
+        if not dur or dur <= 0 then pcall(function() part.CFrame = cf end); return end
         local t = TweenService:Create(part, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = cf})
         v2.ActiveTweens[part] = t
         t:Play()
@@ -1737,11 +1783,8 @@ function mountLocust()
     local function buildAnim(seq)
         local kf = seq:GetKeyframes()
         table.sort(kf, function(a,b) return a.Time < b.Time end)
-        local inst = {
-            Speed=1, Length=kf[#kf].Time, TimePosition=0, Looped=seq.Loop,
-            IsPlaying=false, Stopped=true, _generation=0,
-        }
-        function inst:Play(_fade, speed)
+        local inst = { Speed=1, Length=kf[#kf].Time, TimePosition=0, Looped=seq.Loop, IsPlaying=false, Stopped=true, _generation=0 }
+        function inst:Play(_f, speed)
             if self.IsPlaying then return end
             if type(speed) == "number" then self.Speed = math.max(0.01, math.abs(speed)) end
             self._generation = self._generation + 1
@@ -1749,31 +1792,27 @@ function mountLocust()
             self.Stopped = false; self.IsPlaying = true; self.TimePosition = 0
             task.spawn(function()
                 RunService.Heartbeat:Wait()
-                local prevTime = 0
+                local prev = 0
                 while self._generation == gen and not self.Stopped do
                     for _, kf2 in ipairs(kf) do
                         if self.Stopped or self._generation ~= gen then break end
                         for _, pose in ipairs(kf2:GetDescendants()) do
                             if pose:IsA("Pose") then
-                                local joint = v2.Joints[pose.Name]
-                                if joint then
-                                    local default = v2.AnimDefaults[pose.Name]
-                                    local targetCF = (default and default * pose.CFrame) or pose.CFrame
-                                    setTween(joint, targetCF, 0.1)
+                                local j = v2.Joints[pose.Name]
+                                if j then
+                                    local def = v2.AnimDefaults[pose.Name]
+                                    setTween(j, (def and def * pose.CFrame) or pose.CFrame, 0.1)
                                 end
                             end
                         end
-                        local waitT = math.max(0.02, (kf2.Time - prevTime) / getAnimSpeed(self))
-                        task.wait(waitT)
-                        prevTime = kf2.Time
+                        task.wait(math.max(0.02, (kf2.Time - prev) / getAnimSpeed(self)))
+                        prev = kf2.Time
                         self.TimePosition = kf2.Time
                     end
-                    prevTime = 0
+                    prev = 0
                     if not self.Looped then break end
                 end
-                if self._generation == gen then
-                    self.IsPlaying = false; self.Stopped = true
-                end
+                if self._generation == gen then self.IsPlaying = false; self.Stopped = true end
             end)
         end
         function inst:Stop()
@@ -1787,9 +1826,7 @@ function mountLocust()
         v2.Rigs[rig] = v2.Rigs[rig] or {}
         local rigAnims = v2.Rigs[rig]
         local a = rigAnims[seq.Name]
-        if not a then
-            a = buildAnim(seq); rigAnims[seq.Name] = a
-        end
+        if not a then a = buildAnim(seq); rigAnims[seq.Name] = a end
         for name, other in pairs(rigAnims) do
             if name ~= seq.Name and other.IsPlaying then other:Stop() end
         end
@@ -1799,7 +1836,6 @@ function mountLocust()
         return a
     end
 
-    -- Build visual
     local locustVisual, locustRoot
     if objects then
         local starter = objects:FindFirstChild("StarterCharacter")
@@ -1825,22 +1861,23 @@ function mountLocust()
             if locustRoot then pcall(function() locustVisual.PrimaryPart = locustRoot end) end
             pcall(function() locustVisual:PivotTo(hrp.CFrame) end)
             L.locustVisual = locustVisual; L.locustRoot = locustRoot
+            warn("[Locust] ✔ Visual spawned")
+        else
+            warn("[Locust] ⚠ No StarterCharacter in Objects")
         end
     end
 
-    -- Music
     local locustTheme
     if hasMusic then
         locustTheme = Instance.new("Sound")
         locustTheme.Name = "LocustTheme"; locustTheme.Volume = 1; locustTheme.Looped = true
         locustTheme.Parent = hrp
         if RunService:IsStudio() then locustTheme.SoundId = "rbxasset://Locust.mp3"
-        elseif typeof(getcustomasset) == "function" then locustTheme.SoundId = getcustomasset("FEVerse/Songs/LocustTheme.mp3") end
+        elseif typeof(getcustomasset) == "function" then locustTheme.SoundId = getcustomasset(path_music) end
         if v1.Settings.Music then pcall(function() locustTheme:Play() end) end
         L.locustTheme = locustTheme
     end
 
-    -- Hide character
     local locustOrigTransp = {}
     local function locustHide(d)
         if d:IsA("BasePart") or d:IsA("Decal") then
@@ -1852,7 +1889,6 @@ function mountLocust()
     local hideConn = character.DescendantAdded:Connect(function(d) task.defer(locustHide, d) end)
     humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
-    -- Void kill (Locust-specific, with player guard)
     local function locustVoidKill(model)
         if not model or not model.Parent or not model:IsA("Model") then return end
         if Players:GetPlayerFromCharacter(model) then return end
@@ -1896,7 +1932,6 @@ function mountLocust()
         end)
     end
 
-    -- Locust kill
     local function locustKill(targetPart)
         if v5.Input.Debounce or not v5.Input.KillMode then return end
         local model = targetPart and targetPart:FindFirstAncestorOfClass("Model")
@@ -2027,7 +2062,6 @@ function mountLocust()
 
     L.locustKill = locustKill
 
-    -- Instinct
     toggleLocustInstinct = function()
         Locust.instinct = not Locust.instinct
         if instinctLabelUI then
@@ -2039,7 +2073,7 @@ function mountLocust()
             task.spawn(function()
                 while Locust.instinct and Locust.mounted do
                     task.wait(0.15)
-                    if Locust.mounted and not v5.Input.Debounce and not v5.Movement.Sitting and not v5.Movement.Crouching then
+                    if Locust.mounted and not v5.Input.Debounce then
                         local best, bestDist = nil, 30
                         for _, m in ipairs(workspace:GetDescendants()) do
                             if m:IsA("Model") and m ~= character and m ~= locustVisual then
@@ -2060,7 +2094,6 @@ function mountLocust()
         end
     end
 
-    -- Input
     local inConn = UserInputService.InputBegan:Connect(function(input, gp)
         if gp then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -2073,7 +2106,6 @@ function mountLocust()
     end)
     table.insert(v3.ActiveConnections, inConn)
 
-    -- Heartbeat (visual follow + FOV)
     local hbConn = RunService.Heartbeat:Connect(function()
         if not Locust.mounted then return end
         if locustVisual and locustVisual.Parent and hrp and hrp.Parent then
@@ -2090,7 +2122,6 @@ function mountLocust()
     end)
     table.insert(v3.ActiveConnections, hbConn)
 
-    -- Cleanup
     Locust.cleanup = function()
         Locust.instinct = false
         if v2.Rigs then
@@ -2121,17 +2152,18 @@ function mountLocust()
         for _, ui in ipairs(v3.TrashBin) do pcall(function() ui:Destroy() end) end
         v3.TrashBin = {}
     end
+
+    warn("[Locust] ✔✔ mountLocust() COMPLETE")
 end
 
-function unmountLocust()
+unmountLocust = function()
     if not Locust.mounted then return end
-    if Locust.cleanup then Locust.cleanup() end
+    if Locust.cleanup then pcall(Locust.cleanup) end
     Locust.cleanup = nil
     Locust.mounted = false
     sfx(SND.ui, 0.7, 0.9)
 end
 
--- Character respawn handler
 gtrack(player.CharacterAdded:Connect(function()
     if S.mounted then
         unmount()
@@ -2148,9 +2180,6 @@ end))
 -- ============================================================
 --  UI
 -- ============================================================
-local activeTab = "soul"
-local buildMobilePad
-
 local function setupUI()
     local function new(class, props, parent)
         local o = Instance.new(class)
@@ -2171,7 +2200,6 @@ local function setupUI()
         local ok, hui = pcall(function() return gethui and gethui() end)
         gui.Parent = (ok and hui) or player:WaitForChild("PlayerGui")
     end
-
     local FONT = Enum.Font.Bangers
     pcall(function() FONT = Enum.Font.Creepster end)
 
@@ -2180,7 +2208,6 @@ local function setupUI()
     local HUB_W = 190
     local HUB_H = 280
 
-    -- ===== CIRCLE =====
     local circle = new("TextButton", {
         Name = "HubToggleCircle",
         AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 18),
@@ -2194,7 +2221,6 @@ local function setupUI()
     new("UIPadding", {PaddingTop=UDim.new(0,12), PaddingBottom=UDim.new(0,12),
         PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12)}, circle)
 
-    -- ===== HUB =====
     local hub = new("Frame", {
         Name = "SimpleHub", AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -18, 0, 18 + CIRCLE_SIZE + HUB_GAP),
@@ -2217,7 +2243,6 @@ local function setupUI()
             Size=UDim2.fromOffset(10,2), Rotation=r, BackgroundColor3=CONFIG.NEON_B, BorderSizePixel=0, ZIndex=98}, hubClose)
     end
 
-    -- ===== TAB BAR =====
     local tabBar = new("Frame", {
         Position = UDim2.fromOffset(8, 26), Size = UDim2.new(1, -16, 0, 28),
         BackgroundColor3 = Color3.fromRGB(20, 10, 25), BackgroundTransparency = 0.3,
@@ -2227,7 +2252,7 @@ local function setupUI()
 
     local tabSoulBtn, tabLocustBtn
 
-    local function makeTabBtn(label, xPos, which, initialPos)
+    local function makeTabBtn(label, xPos, initialPos)
         local btn = new("TextButton", {
             Position = initialPos or UDim2.new(xPos, 0, 0, 2), Size = UDim2.new(0.5, -3, 1, -4),
             BackgroundColor3 = Color3.fromRGB(30, 15, 35), AutoButtonColor = false,
@@ -2238,34 +2263,36 @@ local function setupUI()
         local tl = new("TextLabel", {BackgroundTransparency=1, Size=UDim2.fromScale(1,1),
             Font=FONT, Text=label, TextScaled=true, TextColor3=Color3.fromRGB(150,140,150), ZIndex=98}, btn)
         new("UIPadding", {PaddingTop=UDim.new(0,3), PaddingBottom=UDim.new(0,3)}, tl)
-        return btn, tl
+        return btn
     end
 
-    tabSoulBtn, _ = makeTabBtn("SOUL", 0, "soul")
-    tabLocustBtn, _ = makeTabBtn("LOCUST", 0.5, "locust", UDim2.new(0.5, 3, 0, 2))
+    tabSoulBtn = makeTabBtn("SOUL", 0)
+    tabLocustBtn = makeTabBtn("LOCUST", 0.5, UDim2.new(0.5, 3, 0, 2))
 
     local lblMorph, lblInstinct
 
     local function switchTab(which)
         activeTab = which
+        local function setActive(btn, on)
+            btn.BackgroundColor3 = on and Color3.fromRGB(60, 30, 15) or Color3.fromRGB(30, 15, 35)
+            btn:FindFirstChildOfClass("TextLabel").TextColor3 = on and CONFIG.NEON_A or Color3.fromRGB(150,140,150)
+        end
         if which == "soul" then
-            tabSoulBtn.BackgroundColor3 = Color3.fromRGB(60, 30, 15)
-            tabSoulBtn:FindFirstChildOfClass("TextLabel").TextColor3 = CONFIG.NEON_A
-            tabLocustBtn.BackgroundColor3 = Color3.fromRGB(30, 15, 35)
-            tabLocustBtn:FindFirstChildOfClass("TextLabel").TextColor3 = Color3.fromRGB(150,140,150)
-            lblMorph.Text = S.mounted and "UNMORPH" or "MORPH"
-            lblMorph.TextColor3 = S.mounted and CONFIG.NEON_B or CONFIG.NEON_A
+            setActive(tabSoulBtn, true); setActive(tabLocustBtn, false)
+            if lblMorph then
+                lblMorph.Text = S.mounted and "UNMORPH" or "MORPH"
+                lblMorph.TextColor3 = S.mounted and CONFIG.NEON_B or CONFIG.NEON_A
+            end
             if lblInstinct then
                 lblInstinct.Text = soulInstinct and "INSTINCT: ON" or "INSTINCT: OFF"
                 lblInstinct.TextColor3 = soulInstinct and CONFIG.NEON_D or CONFIG.NEON_C
             end
         else
-            tabLocustBtn.BackgroundColor3 = Color3.fromRGB(60, 30, 15)
-            tabLocustBtn:FindFirstChildOfClass("TextLabel").TextColor3 = CONFIG.NEON_A
-            tabSoulBtn.BackgroundColor3 = Color3.fromRGB(30, 15, 35)
-            tabSoulBtn:FindFirstChildOfClass("TextLabel").TextColor3 = Color3.fromRGB(150,140,150)
-            lblMorph.Text = Locust.mounted and "UNMORPH" or "MORPH"
-            lblMorph.TextColor3 = Locust.mounted and CONFIG.NEON_B or CONFIG.NEON_A
+            setActive(tabSoulBtn, false); setActive(tabLocustBtn, true)
+            if lblMorph then
+                lblMorph.Text = Locust.mounted and "UNMORPH" or "MORPH"
+                lblMorph.TextColor3 = Locust.mounted and CONFIG.NEON_B or CONFIG.NEON_A
+            end
             if lblInstinct then
                 lblInstinct.Text = Locust.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
                 lblInstinct.TextColor3 = Locust.instinct and CONFIG.NEON_D or CONFIG.NEON_C
@@ -2277,7 +2304,6 @@ local function setupUI()
     tabSoulBtn.Activated:Connect(function() sfx(SND.ui, 0.4, 1.1); switchTab("soul") end)
     tabLocustBtn.Activated:Connect(function() sfx(SND.ui, 0.4, 1.1); switchTab("locust") end)
 
-    -- ===== FEATURE BUTTONS =====
     local function hubBtn(label, col, yPos, size, cb)
         local b = new("TextButton", {
             AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, yPos),
@@ -2337,13 +2363,10 @@ local function setupUI()
             lblInstinct.TextColor3 = soulInstinct and CONFIG.NEON_D or CONFIG.NEON_C
         else
             if toggleLocustInstinct then toggleLocustInstinct() end
-            lblInstinct.Text = Locust.instinct and "INSTINCT: ON" or "INSTINCT: OFF"
-            lblInstinct.TextColor3 = Locust.instinct and CONFIG.NEON_D or CONFIG.NEON_C
         end
     end)
     instinctLabelUI = lblInstinct
 
-    -- ===== CIRCLE DRAG/TAP =====
     local function syncCircle()
         if hub.Visible then
             circle.Text = "✕"; circle.TextColor3 = CONFIG.NEON_B; cStroke.Color = CONFIG.NEON_B
@@ -2407,19 +2430,14 @@ local function setupUI()
         end
     end))
 
-    -- ===== MOBILE PAD (rebuildable) =====
     local mobilePad
-
     buildMobilePad = function(mode)
         if not UserInputService.TouchEnabled then return end
         if mobilePad then mobilePad:Destroy() end
         mobilePad = new("Frame", {
-            AnchorPoint = Vector2.new(1, 1),
-            Position = UDim2.new(1, -14, 1, -30),
-            Size = UDim2.fromOffset(230, 340),
-            BackgroundTransparency = 1, Visible = false, ZIndex = 85,
+            AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -30),
+            Size = UDim2.fromOffset(230, 340), BackgroundTransparency = 1, Visible = false, ZIndex = 85,
         }, gui)
-
         local function mBtn(label, col, x, y, d, cb, onRelease)
             local b = new("TextButton", {AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromOffset(x,y),
                 Size=UDim2.fromOffset(d,d), BackgroundColor3=Color3.fromRGB(15,8,18), BackgroundTransparency=0.25,
@@ -2442,7 +2460,6 @@ local function setupUI()
                 end
             end)
         end
-
         if mode == "soul" then
             mBtn("RIP",   CONFIG.NEON_A, 180, 210, 56, actRip)
             mBtn("SLAM",  CONFIG.NEON_A, 120, 245, 56, actSlam)
@@ -2454,43 +2471,36 @@ local function setupUI()
             mBtn("DUMMY", CONFIG.NEON_C, 48, 90, 48, spawnDummy)
             mBtn("QUAD",  CONFIG.NEON_C, 112, 85, 58, function() S.quad = true end, function() S.quad = false end)
         else
-            -- Locust: KILL big button + crouch/sit toggles
             mBtn("KILL", CONFIG.NEON_A, 140, 180, 90, function()
-                if Locust.state.v5 then
+                if Locust.state and Locust.state.locustKill then
                     local mouse = player:GetMouse()
-                    if mouse and mouse.Target and Locust.state.locustKill then
-                        task.spawn(Locust.state.locustKill, mouse.Target)
-                    end
+                    if mouse and mouse.Target then task.spawn(Locust.state.locustKill, mouse.Target) end
                 end
             end)
             mBtn("CROUCH", CONFIG.NEON_C, 50, 100, 52, function()
-                if Locust.state.v5 then Locust.state.v5.Movement.Crouching = not Locust.state.v5.Movement.Crouching end
+                if Locust.state and Locust.state.v5 then Locust.state.v5.Movement.Crouching = not Locust.state.v5.Movement.Crouching end
             end)
             mBtn("SIT", CONFIG.NEON_C, 50, 200, 52, function()
-                if Locust.state.v5 then Locust.state.v5.Movement.Sitting = not Locust.state.v5.Movement.Sitting end
+                if Locust.state and Locust.state.v5 then Locust.state.v5.Movement.Sitting = not Locust.state.v5.Movement.Sitting end
             end)
             mBtn("SPRINT", CONFIG.NEON_C, 50, 280, 52, function()
-                if Locust.state.v5 then Locust.state.v5.Input.MobileSprint = not Locust.state.v5.Input.MobileSprint end
+                if Locust.state and Locust.state.v5 then Locust.state.v5.Input.MobileSprint = not Locust.state.v5.Input.MobileSprint end
             end)
         end
     end
-
     buildMobilePad("soul")
 
     gtrack(RunService.RenderStepped:Connect(function()
-        if mobilePad then
-            mobilePad.Visible = (S.mounted or Locust.mounted) and not menuOpen
-        end
+        if mobilePad then mobilePad.Visible = (S.mounted or Locust.mounted) and not menuOpen end
     end))
     gtrack(RunService.Heartbeat:Connect(checkRespawns))
 end
 
--- ===== KEYBOARD INPUT =====
 gtrack(UserInputService.InputBegan:Connect(function(input, gp)
     if input.KeyCode == CONFIG.MENU_KEY then return end
     if gp or menuOpen then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if Locust.mounted then return end -- Locust LMB handled in mountLocust
+        if Locust.mounted then return end
         if not S.mounted then return end
         if S.ctrlHeld then actHeadEat() else actSwipe() end
         return
@@ -2520,7 +2530,9 @@ gtrack(UserInputService.InputEnded:Connect(function(input)
     end
 end))
 
--- ===== CLEANUP =====
+-- ============================================================
+--  INIT
+-- ============================================================
 local function cleanup()
     unmount()
     unmountLocust()
@@ -2536,5 +2548,14 @@ local function cleanup()
 end
 genv.__HALLOWEEN_SOUL_V3 = cleanup
 
-setupUI()
-task.spawn(loadTemplate)
+warn("[Init] Building UI...")
+local ok_ui, err_ui = pcall(setupUI)
+if not ok_ui then warn("[Init] ✘ setupUI CRASHED: " .. tostring(err_ui)) else warn("[Init] ✔ UI ready") end
+
+warn("[Init] Preloading soul template...")
+task.spawn(function()
+    local ok_tpl, err_tpl = pcall(loadTemplate)
+    if not ok_tpl then warn("[Init] ✘ loadTemplate crashed: " .. tostring(err_tpl)) end
+end)
+
+warn("[Init] ✔✔ Script loaded. Click the ☰ circle top-right.")
